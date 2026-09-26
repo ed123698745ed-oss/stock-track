@@ -7,9 +7,10 @@ on:
         description: '往回抓幾天（第一次可填 120 回補歷史）'
         required: false
         default: '30'
+  # 主要觸發：cron-job.org 於台北 19:05、19:20 呼叫 workflow_dispatch（準時）。
+  # GitHub 排程只留一次當備援（它常延遲甚至跳過）。
   schedule:
-    - cron: '0 10 * * 1-5'    # 台北 18:00
-    - cron: '30 12 * * 1-5'   # 台北 20:30（補跑，重覆執行不會重複寫入）
+    - cron: '30 12 * * 1-5'   # 台北 20:30（補跑）
 
 jobs:
   fetch:

@@ -2,8 +2,9 @@ name: 抓取處置股
 
 on:
   workflow_dispatch:
+  # 主要觸發：cron-job.org 於台北 19:05、19:20 呼叫 workflow_dispatch（準時）。
+  # GitHub 排程只留一次當備援（它常延遲甚至跳過）。
   schedule:
-    - cron: '10 10 * * 1-5'   # 台北 18:10
     - cron: '40 12 * * 1-5'   # 台北 20:40（補跑）
 
 jobs:

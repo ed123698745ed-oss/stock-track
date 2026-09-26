@@ -1,5 +1,5 @@
 const SUPABASE_URL = "https://cvjjzboacbileqikwgcy.supabase.co";
-const GH = "https://github.com/ed123698745ed-oss/stock-alert/actions";
+const GH = "https://github.com/ed123698745ed-oss/stock-track/actions";
 
 const $ = id => document.getElementById(id);
 let SUPABASE_KEY = "";
