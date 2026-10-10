@@ -38,6 +38,7 @@ const BLOCKS = {
   tw50:     { name: "0050",   color: "#60a5fa" },
   msci:     { name: "MSCI",   color: "#f472b6" },
   cb:       { name: "可轉債", color: "#0d9488" },
+  strategy: { name: "策略",   color: "#84cc16" },
 };
 const blkColor = c => (BLOCKS[c] || {}).color || "var(--dim)";
 
@@ -147,6 +148,8 @@ function ensureSections() {
     <h2 class="blk" id="idxTitle" style="--c:${BLOCKS.tw50.color}">指數調整</h2>
     <div id="indexPos"></div>
     <div id="indexCal"></div>
+    <h2 class="blk" id="stgTitle" style="--c:${BLOCKS.strategy.color}">策略排程</h2>
+    <div id="stgPlan"></div>
     <h2 id="detTitle" hidden>其他偵測公告</h2><div id="detections"></div>`);
 
   $("indexCal").appendChild($("calendar"));
@@ -162,6 +165,7 @@ const NAV = [
   { id: "splitTitle", label: "分割", c: BLOCKS.split.color },
   { id: "bbTitle",  label: "庫藏股", c: BLOCKS.buyback.color },
   { id: "idxTitle", label: "指數調整", c: BLOCKS.tw50.color },
+  { id: "stgTitle", label: "策略排程", c: BLOCKS.strategy.color },
 ];
 
 function buildNav() {
@@ -246,8 +250,16 @@ async function load() {
   const detOther = detAll.filter(r => r.strategy_code !== "split");
 
   const POS = pos.data || [];
+  // 策略訊號另外讀：sql/001 還沒執行時不要拖垮整頁
+  const [sAct, sPlan] = await Promise.all([
+    sb.from("v_strategy_actions").select("*"),
+    sb.from("strategy_actions").select("*").eq("ignored", false).gte("act_date", TODAY)
+      .lte("act_date", iso(new Date(Date.now() + 60 * 864e5))).order("act_date"),
+  ]);
+  const todo = (tmr.data || []).concat((sAct.data || []).map(stgTodo));
   renderStatus(run.data?.[0]);
-  renderTomorrow(tmr.data || []);
+  renderTomorrow(todo);
+  renderStrategyPlan(sPlan.data || [], sAct.error || sPlan.error);
   renderCalendar(CAL);
   renderDisposals((dsp.data || []).filter(r => r.grp !== "出關觀察"));  // Ed 不看出關
   renderIpos(ipo.data || []);
@@ -259,7 +271,7 @@ async function load() {
                   "indexPos", "idxTitle", "指數調整", BLOCKS.tw50.color);
   renderDetections(detOther);
   renderStrategies(STG);
-  renderKpis(tmr.data || [], dsp.data || [], ipo.data || [], detAll);
+  renderKpis(todo, dsp.data || [], ipo.data || [], detAll);
   fillForm();
 }
 
@@ -340,6 +352,62 @@ function renderTomorrow(rows) {
       }${list.map(card).join("")}`;
     }).join("");
   bindRows(box);
+}
+
+// ---------- 策略訊號（日曆型策略等，strategy_actions）----------
+const TIMING = { open: "開盤", close: "收盤" };
+const timingOf = t => TIMING[t] || "時點待確認";
+const stgAction = r => r.action || (r.role === "entry"
+  ? (r.side === "long" ? "買進" : "放空") : (r.side === "long" ? "賣出" : "回補"));
+// 009 的變體名就是「名稱+代號」，重複就不顯示
+const stgVar = r => r.variant === `${r.company_name}${r.company_code}` ? "" : r.variant;
+const stgPair = r => r.pair_date
+  ? `${r.role === "entry" ? "出場" : "進場"} ${fmt(r.pair_date)} ${timingOf(r.pair_timing)}` : "";
+
+// 轉成 v_tomorrow 的欄位，讓「待辦」直接合併顯示
+function stgTodo(r) {
+  return {
+    due_label: r.due_label, act_kind: r.act_kind,
+    action: `${stgAction(r)}・${timingOf(r.act_timing)}`,
+    block: `${r.strategy_id} ${r.strategy_name}`, block_code: "strategy",
+    event_date: r.act_date, company_name: r.company_name, company_code: r.company_code,
+    detail: [stgVar(r), stgPair(r), r.detail].filter(Boolean).join("｜"),
+    src_table: "strategy_actions", src_id: r.id, checked: r.checked, note: r.note,
+  };
+}
+
+function renderStrategyPlan(rows, err) {
+  const box = $("stgPlan");
+  navCount("stgTitle", rows.length);
+  if (err) {
+    box.innerHTML = `<div class="empty">策略訊號讀取失敗：${esc(err.message)}
+      <br>（第一次使用請先在 Supabase 執行 sql/001_strategy_actions.sql）</div>`;
+    return;
+  }
+  if (!rows.length) { box.innerHTML = `<div class="empty">未來 60 天沒有策略要進出場。</div>`; return; }
+  const c = BLOCKS.strategy.color;
+  const byDay = {};
+  rows.forEach(r => (byDay[r.act_date] = byDay[r.act_date] || []).push(r));
+  box.innerHTML = Object.entries(byDay).map(([d, list]) => {
+    const days = Math.round((new Date(d) - new Date(TODAY)) / 864e5);
+    const when = days === 0 ? "今天" : (days === 1 ? "明天" : `${days} 天後`);
+    return `
+    <div class="card blkline ${days <= 3 ? "soon" : ""}" style="--c:${c}">
+      <span class="tag ${days <= 3 ? "warn" : ""}" style="${days <= 3 ? "" : "color:var(--dim)"}">${when}</span>
+      <span class="tag" style="color:var(--dim)">${fmt(d)}</span>
+      ${list.map(r => {
+        const act = stgAction(r);
+        const kind = (r.role === "entry") === (r.side === "long") ? "buy" : "sell";
+        return `<div style="margin-top:10px">
+          <span class="tag ${kind}">${act}・${timingOf(r.act_timing)}</span>
+          <span class="tag blk" style="--c:${c}">${esc(r.strategy_id)} ${esc(r.strategy_name)}</span>
+          <div class="name" style="font-size:16px">${esc(r.company_name)}
+            <span class="code">${esc(r.company_code)}</span></div>
+          <div class="meta">${esc([stgVar(r), stgPair(r), r.detail].filter(Boolean).join("｜"))}</div>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }).join("");
 }
 
 // ---------- 近期行事曆 ----------
@@ -737,7 +805,7 @@ function noteBlock(table, r) {
         <input type="checkbox" data-t="${table}" data-f="checked" data-id="${r.id}"
           ${r.checked ? "checked" : ""}> 已處理
       </label>
-      ${table === "signals" || table === "disposals"
+      ${["signals", "disposals", "strategy_actions"].includes(table)
         ? `<button class="small" data-ignore="${table}:${r.id}">忽略</button>` : ""}
     </div>
     <div class="row">
@@ -850,5 +918,10 @@ function renderStrategies(rows) {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !$("app").hidden) load();
 });
+
+// 可安裝成 App（手機「加入主畫面」、電腦網址列的「安裝」）
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
 
 boot();
