@@ -99,13 +99,15 @@ def leg(sid, variant, code, name, cycle, side, entry, entry_t, exit_, exit_t, st
     rows = []
     for role, d, t, pair, pt in (("entry", entry, entry_t, exit_, exit_t),
                                  ("exit", exit_, exit_t, entry, entry_t)):
+        if d is None:  # 出場日還算不出來（休市日未公布）：先只提醒進場，不推估
+            continue
         rows.append({
             "strategy_id": sid,
             "strategy_name": META.get(sid, {}).get("name") or stat.get("name"),
             "variant": variant, "company_code": code, "company_name": name,
             "cycle": cycle, "role": role, "side": side,
             "act_date": d.isoformat(), "act_timing": t,
-            "pair_date": pair.isoformat(), "pair_timing": pt,
+            "pair_date": pair.isoformat() if pair else None, "pair_timing": pt if pair else None,
             "detail": stat_text(stat),
         })
     return rows
@@ -163,10 +165,14 @@ def build(cal, years, tsmc_calls=()):
                 {"name": "台股上中下旬", "n": n, "win": win, "p": p}))
 
         # A10 長榮航冬季：10 月第 10 交易日 → 隔年 1 月第 8 交易日（原表未註明開/收盤）
-        if cal.known(D(y, 10, 1), D(y + 1, 1, 1)):
-            ent, ext = cal.month_days(y, 10)[9], cal.month_days(y + 1, 1)[7]
+        # 進場日只需要 10 月的休市日；隔年 1 月還沒公布時先只提醒進場，出場日之後補上
+        if cal.known(D(y, 10, 1)):
+            ent = cal.month_days(y, 10)[9]
+            ext = cal.month_days(y + 1, 1)[7] if cal.known(D(y + 1, 1, 1)) else None
             rows.extend(leg("A10", "長榮航冬季", "2618", "長榮航", str(y), "long",
                             ent, None, ext, None, {"n": 16, "win": 81.3, "p": 0.0053}))
+            if ext is None:
+                skipped.append(f"A10 長榮航 {y} 出場日（隔年休市日未公布，僅提醒進場）")
         else:
             skipped.append(f"A10 長榮航 {y}")
         # A10 華航夏季：5 月第 15 交易日 → 6 月第 1 交易日

@@ -139,8 +139,8 @@ def main():
         print("\nDRY_RUN：不推送")
     else:
         print("\nLINE 回應", push_line(text))
-    if tmr is None and stg is None:
-        sys.exit(1)  # 讓 Actions 顯示紅燈
+    if (tmr is None and stg is None) or os.environ.get("CAL_OUTCOME", "success") != "success":
+        sys.exit(1)  # 訊息已送出；讓 Actions 顯示紅燈，不要靜靜綠燈
 
 
 if __name__ == "__main__":
