@@ -1,0 +1,38 @@
+name: 每日訊號推播
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只印訊息、不推 LINE（填 1）'
+        required: false
+        default: '0'
+  # 排在所有抓取（最晚 20:50 重大訊息）之後。GitHub 排程可能延遲十幾分鐘，晚間推播可以接受。
+  schedule:
+    - cron: '7 13 * * 1-5'   # 台北 21:07
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 更新日曆型策略訊號
+        id: cal
+        continue-on-error: true
+        run: python3 scripts/calendar_signals.py
+
+      - name: 推播 LINE
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          CAL_OUTCOME: ${{ steps.cal.outcome }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+        run: python3 scripts/daily_push.py
