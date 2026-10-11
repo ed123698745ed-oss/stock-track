@@ -12,55 +12,54 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: probe
+      - name: probe TPEx
         run: |
           python3 - <<'PYEOF'
-          import json, urllib.request, time, datetime as dt
-          UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128.0 Safari/537.36"}
-          def get(url):
-              req = urllib.request.Request(url, headers=UA)
-              t = time.time()
+          import json, urllib.request, time, ssl
+          UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0 Safari/537.36")
+          HDRS = {
+            "A_ua+json": {"User-Agent": UA, "Accept": "application/json"},
+            "B_ua+json+ref": {"User-Agent": UA, "Accept": "application/json, text/plain, */*",
+                              "Referer": "https://www.tpex.org.tw/zh-tw/mainboard/trading/info/pricing.html",
+                              "Accept-Language": "zh-TW,zh;q=0.9"},
+          }
+          def get(url, h):
+              req = urllib.request.Request(url, headers=h)
               try:
-                  with urllib.request.urlopen(req, timeout=40) as r:
+                  with urllib.request.urlopen(req, timeout=30) as r:
                       b = r.read()
-                  print(f"\n===== {url}\n  {len(b)} bytes, {time.time()-t:.1f}s")
-                  return json.loads(b.decode("utf-8-sig"))
+                  return json.loads(b.decode("utf-8-sig")), f"OK {len(b)}B"
               except Exception as e:
-                  print(f"\n===== {url}\n  FAIL {type(e).__name__}: {str(e)[:200]}")
-          def show(j, rows=3):
-              if j is None: return
+                  return None, f"FAIL {type(e).__name__}: {str(e)[:120]}"
+          def show(j, rows=2):
               if isinstance(j, list):
-                  print("  list len", len(j)); [print("   ", json.dumps(x, ensure_ascii=False)[:400]) for x in j[:rows]]; return
-              for k, v in j.items():
+                  print("    list len", len(j))
+                  for x in j[:rows]: print("     ", json.dumps(x, ensure_ascii=False)[:500])
+                  return
+              for k, v in (j or {}).items():
                   if k == "tables" and isinstance(v, list):
                       for i, t in enumerate(v):
-                          print(f"  tables[{i}] title={t.get('title')!r} fields={t.get('fields')} n={len(t.get('data') or [])}")
-                          for row in (t.get("data") or [])[:rows]: print("     ", json.dumps(row, ensure_ascii=False)[:400])
-                  elif isinstance(v, list):
-                      print(f"  {k}: list len {len(v)}")
-                      for row in v[:rows]: print("     ", json.dumps(row, ensure_ascii=False)[:400])
+                          print(f"    tables[{i}] title={t.get('title')!r} fields={t.get('fields')} n={len(t.get('data') or [])}")
+                          for row in (t.get("data") or [])[:rows]: print("       ", json.dumps(row, ensure_ascii=False)[:500])
                   else:
-                      print(f"  {k}: {json.dumps(v, ensure_ascii=False)[:300]}")
-          print("now UTC", dt.datetime.utcnow())
-          for d in ("20261008", "20250407"):
-              # 大盤統計：加權指數收盤、漲跌點／幅、漲跌停家數
-              show(get(f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={d}&type=MS&response=json"))
-              # 上市個股收盤（全部）
-              show(get(f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={d}&type=ALLBUT0999&response=json"), 2)
-              # 上櫃個股收盤
-              y, m, dd = d[:4], d[4:6], d[6:]
-              show(get(f"https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date={y}/{m}/{dd}&type=EW&response=json"), 2)
-              # 上櫃漲跌停家數統計
-              show(get(f"https://www.tpex.org.tw/www/zh-tw/afterTrading/marketStat?date={y}/{m}/{dd}&response=json"), 5)
-              # 融資融券（個股）
-              show(get(f"https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date={d}&selectType=ALL&response=json"), 2)
-              show(get(f"https://www.tpex.org.tw/www/zh-tw/margin/balance?date={y}/{m}/{dd}&response=json"), 2)
-              time.sleep(3)
-          # 盤中即時：加權指數、櫃買指數
-          show(get("https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw|otc_o00.tw&json=1&delay=0"))
-          # OpenAPI 備援
-          show(get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"), 2)
-          show(get("https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN"), 2)
-          show(get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"), 2)
-          show(get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance"), 2)
+                      print(f"    {k}: {json.dumps(v, ensure_ascii=False)[:300]}")
+          URLS = [
+            "https://www.tpex.org.tw/openapi/v1/tpex_disposal_information",
+            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance",
+            "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026/10/08&id=&response=json",
+            "https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date=2026/10/08&type=EW&response=json",
+            "https://www.tpex.org.tw/www/zh-tw/margin/balance?date=2026/10/08&id=&response=json",
+            "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2025/04/07&id=&response=json",
+          ]
+          shown = set()
+          for u in URLS:
+              print(f"\n===== {u}")
+              for name, h in HDRS.items():
+                  j, msg = get(u, h)
+                  print(f"  [{name}] {msg}")
+                  if j is not None and u not in shown:
+                      shown.add(u); show(j)
+                  time.sleep(1)
           PYEOF
