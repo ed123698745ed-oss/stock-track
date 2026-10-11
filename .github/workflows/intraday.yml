@@ -1,0 +1,38 @@
+name: 盤中提醒
+
+# A08、014、010 是訊號日當天收盤進場，要在收盤前提醒。
+# 主要觸發：cron-job.org 於台北 13:05、13:15 呼叫 workflow_dispatch（準時）。
+# GitHub 排程只當備援；延遲超過 13:27 程式會自己略過，不會收盤後才推。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只印、不推 LINE（填 1）'
+        required: false
+        default: '0'
+      force:
+        description: '不檢查時間窗（測試用，填 1）'
+        required: false
+        default: '0'
+  schedule:
+    - cron: '5 5 * * 1-5'    # 台北 13:05
+    - cron: '15 5 * * 1-5'   # 台北 13:15
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: 檢查 A08／014／010
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          FORCE: ${{ github.event.inputs.force || '0' }}
+        run: python3 scripts/intraday.py
