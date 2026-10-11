@@ -76,8 +76,10 @@ def table(j, title_part):
 def stock_row(close, sign, diff, open_, vol):
     """收盤、漲跌符號、漲跌價差 → {c 收盤, lu 收漲停, ld 收跌停, v 有效行情日}。參考價 = 收盤 − 漲跌。
     有效行情日（020 用）：有開盤價、有收盤價、成交股數 > 0。"""
-    if close is None or diff is None:
+    if close is None:
         return None
+    if diff is None:  # 除權息、新上市等漲跌欄不是數字：有效行情日照記，漲跌停無法判斷
+        return {"c": close, "lu": False, "ld": False, "v": open_ is not None and (vol or 0) > 0}
     s = re.sub(r"<[^>]+>", "", str(sign or "")).strip()
     ref = close - diff if s == "+" else close + diff if s == "-" else close
     if ref <= 0:
@@ -151,9 +153,8 @@ def parse_tpex_quotes(j):
             if not COMMON.match(r[ic].strip()):
                 continue
             close, diff = num(r[ix]), num(r[idf])
-            if close is None or diff is None:
-                continue
-            row = stock_row(close, "+" if diff >= 0 else "-", abs(diff), num(r[io]), num(r[iv]))
+            row = stock_row(close, None if diff is None else "+" if diff >= 0 else "-",
+                            None if diff is None else abs(diff), num(r[io]), num(r[iv]))
             if row:
                 row["n"] = r[1].strip()
                 out[r[ic].strip()] = row
@@ -239,8 +240,9 @@ def main():
         n = int(os.environ["BACKFILL"])
         end = today if cal.is_trading(today) else cal.shift(today, -1)
         days = [cal.shift(end, -i) for i in range(n - 1, -1, -1)]
-        have = {r["d"] for r in supa(f"market_days?select=d&d=gte.{days[0].isoformat()}")}
-        days = [x for x in days if x.isoformat() not in have]
+        if os.environ.get("REFETCH") != "1":
+            have = {r["d"] for r in supa(f"market_days?select=d&d=gte.{days[0].isoformat()}")}
+            days = [x for x in days if x.isoformat() not in have]
     else:
         if not cal.is_trading(today):
             print(f"{today} 不是交易日，略過")
