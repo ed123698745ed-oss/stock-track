@@ -1,6 +1,7 @@
 name: 回補歷史行情
 
-# 第一次使用跑一次：020 需要每檔超過 120 個有效行情日的融資餘額。
+# 第一次使用跑一次：020 每檔要先有 120 個有效行情日，加上穿越判斷、二次群聚的前 20 日，
+# 回補起點至少要比第一個判斷日早約 160 個交易日；直接回補一年以上（預設 300）。
 # 已存在的日子會略過，中斷了重跑即可接續。
 on:
   workflow_dispatch:
@@ -8,7 +9,7 @@ on:
       days:
         description: '往回補幾個交易日'
         required: false
-        default: '160'
+        default: '300'
 
 permissions:
   contents: read
@@ -23,7 +24,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          BACKFILL: ${{ github.event.inputs.days || '160' }}
+          BACKFILL: ${{ github.event.inputs.days || '300' }}
         run: python3 scripts/market.py
       - name: 用回補的資料檢查事件型策略（只印不寫）
         env:
