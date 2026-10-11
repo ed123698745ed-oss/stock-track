@@ -64,3 +64,10 @@ from strategy_actions a, t, nxt
 where not a.ignored
   and a.act_date <= nxt.next_day
   and (a.act_date >= t.today or (not a.checked and a.act_date >= t.today - 14));
+
+-- 權限：Supabase 新表預設不開放給 API 角色，要明確授權。
+-- service_role = GitHub Actions 寫入／讀取；authenticated = 登入後的網站。
+grant select, insert, update on strategy_actions to service_role;
+grant select on v_strategy_actions to service_role, authenticated;
+grant select, update on strategy_actions to authenticated;
+grant select on holidays to authenticated;
