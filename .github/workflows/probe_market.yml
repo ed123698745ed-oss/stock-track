@@ -10,56 +10,21 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
-      - name: probe TPEx
+      - name: probe MIS 個股欄位
         run: |
           python3 - <<'PYEOF'
-          import json, urllib.request, time, ssl
-          UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/128.0 Safari/537.36")
-          HDRS = {
-            "A_ua+json": {"User-Agent": UA, "Accept": "application/json"},
-            "B_ua+json+ref": {"User-Agent": UA, "Accept": "application/json, text/plain, */*",
-                              "Referer": "https://www.tpex.org.tw/zh-tw/mainboard/trading/info/pricing.html",
-                              "Accept-Language": "zh-TW,zh;q=0.9"},
-          }
-          def get(url, h):
-              req = urllib.request.Request(url, headers=h)
-              try:
-                  with urllib.request.urlopen(req, timeout=30) as r:
-                      b = r.read()
-                  return json.loads(b.decode("utf-8-sig")), f"OK {len(b)}B"
-              except Exception as e:
-                  return None, f"FAIL {type(e).__name__}: {str(e)[:120]}"
-          def show(j, rows=2):
-              if isinstance(j, list):
-                  print("    list len", len(j))
-                  for x in j[:rows]: print("     ", json.dumps(x, ensure_ascii=False)[:500])
-                  return
-              for k, v in (j or {}).items():
-                  if k == "tables" and isinstance(v, list):
-                      for i, t in enumerate(v):
-                          print(f"    tables[{i}] title={t.get('title')!r} fields={t.get('fields')} n={len(t.get('data') or [])}")
-                          for row in (t.get("data") or [])[:rows]: print("       ", json.dumps(row, ensure_ascii=False)[:500])
-                  else:
-                      print(f"    {k}: {json.dumps(v, ensure_ascii=False)[:300]}")
-          URLS = [
-            "https://www.tpex.org.tw/openapi/v1/tpex_disposal_information",
-            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
-            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_margin_balance",
-            "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026/10/08&id=&response=json",
-            "https://www.tpex.org.tw/www/zh-tw/afterTrading/otc?date=2026/10/08&type=EW&response=json",
-            "https://www.tpex.org.tw/www/zh-tw/margin/balance?date=2026/10/08&id=&response=json",
-            "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2025/04/07&id=&response=json",
-          ]
-          shown = set()
-          for u in URLS:
-              print(f"\n===== {u}")
-              for name, h in HDRS.items():
-                  j, msg = get(u, h)
-                  print(f"  [{name}] {msg}")
-                  if j is not None and u not in shown:
-                      shown.add(u); show(j)
-                  time.sleep(1)
+          import json, urllib.request
+          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
+          chs = "|".join(["tse_2330.tw", "tse_2317.tw", "otc_6488.tw", "otc_3105.tw"] + [f"tse_{c}.tw" for c in range(1101, 1161)])
+          url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={chs}&json=1&delay=0"
+          print("url length", len(url))
+          req = urllib.request.Request(url, headers={"User-Agent": UA, "Referer": "https://mis.twse.com.tw/stock/fibest.jsp"})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              j = json.loads(r.read())
+          arr = j.get("msgArray") or []
+          print("rtcode", j.get("rtcode"), "回傳筆數", len(arr))
+          for x in arr[:4]:
+              print(json.dumps({k: x.get(k) for k in ("c", "n", "ex", "z", "y", "u", "w", "a", "b", "o", "h", "l", "v", "t", "d")}, ensure_ascii=False))
           PYEOF

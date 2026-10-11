@@ -120,7 +120,7 @@ def stat_text(s):
     if s.get("win") is not None:
         parts.append(f"勝率{s['win']:g}%")
     if s.get("p") is not None:
-        parts.append(f"p={s['p']:.4f}")
+        parts.append(f"p{s['p']}" if isinstance(s["p"], str) else f"p={s['p']:.4f}")
     return " ".join(parts)
 
 
