@@ -34,7 +34,8 @@ STAT = {
 A08_TH = -5.0
 C014_TH, C014_GAP = 100, 40
 C010_STREAK = 4
-M020 = {"look": 120, "ratio": 0.60, "dedupe": 20, "cluster": 0.02, "window": 20, "hold": 20}
+M020 = {"look": 120, "ratio": 0.60, "dedupe": 20, "cluster": 0.02, "window": 20, "hold": 20,
+        "min_base": 300}
 
 
 def _d(x):
@@ -127,7 +128,11 @@ def c020(days, cal, today=None):
       3. 距同一檔上次被採計的訊號滿 20 個有效行情日；未滿的直接丟掉，不重新起算
       該股要有超過 120 筆資料才開始判斷。
     鏈接：當日「前日餘額」≠ 前一有效日「今日餘額」（減資、分割、調帳）→ 歷史餘額按比例調整。
-    群聚日：當日訊號檔數 ≥ 有融資股票數 × 2%（有融資股票 = 當日融資餘額 > 0）。
+    分母（有融資股票）：當日同時符合
+      a. 普通股（四碼、非 00 開頭）  b. 當日是有效行情日且有融資資料列
+      c. 已累積超過 120 個這樣的資料日（第 121 筆起）  d. 近 120 日鏈接後融資餘額最高值 > 0
+      分母 < 300 檔時不計算觸發比例。分子只從進得了分母的股票產生。
+    群聚日：當日訊號檔數 ≥ 分母 × 2%。
     二次群聚日：當日是群聚日，且前 20 個市場交易日內已有群聚日。
     進出場：二次群聚日 T 的下一市場交易日開盤等權買進 T 的全部訊號股；T 後第 20 個市場交易日收盤賣出。
     """
@@ -146,8 +151,6 @@ def c020(days, cal, today=None):
             mb = s.get("mb")
             if mb is None:
                 continue
-            if mb > 0:
-                base += 1
             h = hist.setdefault(code, [])
             # 鏈接：每個有融資資料的日子都比對，避免非有效日的餘額變動被誤當成減資／分割
             mp = s.get("mp")
@@ -165,18 +168,26 @@ def c020(days, cal, today=None):
             hit = hi > 0 and h[-1] <= hi * M["ratio"]
             was = prevhit.get(code)
             prevhit[code] = hit
-            if len(h) <= M["look"] or was is None:
-                continue  # 要超過 120 筆，且前一有效日的門檻判斷要存在
+            if len(h) <= M["look"] or hi <= 0:
+                continue  # 要超過 120 筆，且 120 日高點 > 0，才進得了分母
+            base += 1
+            if was is None:
+                continue
             if hit and not was:
                 if code in lastsig and k - lastsig[code] < M["dedupe"]:
                     continue
                 lastsig[code] = k
                 sigs.append(code)
-        is_cluster = base > 0 and len(sigs) >= base * M["cluster"]
-        if not is_cluster:
+        if base < M["min_base"]:
+            if base:
+                notes.append(f"{r['d']} 020 分母 {base} 檔 < {M['min_base']}，不計算觸發比例")
+            continue
+        if len(sigs) < base * M["cluster"]:
             continue
         second = any(i - j <= M["window"] for j in cluster_idx)
         cluster_idx.append(i)
+        notes.append(f"群聚日 {r['d']}：訊號 {len(sigs)} 檔／分母 {base} 檔 = {len(sigs) / base:.2%}"
+                     f"{'　← 二次群聚日' if second else ''}")
         if not second:
             continue
         t = _d(r["d"])
@@ -202,7 +213,7 @@ def main():
     cal = Cal(hol)
     today = dt.datetime.now(TPE).date()
     days = supa("market_days?select=d,taiex,taiex_pct,ld_twse,ld_tpex,has_otc,has_margin,stocks"
-                "&order=d.desc&limit=200")
+                "&order=d.desc&limit=330")
     if not days:
         print("market_days 沒有資料，先跑 scripts/market.py")
         return
@@ -213,7 +224,10 @@ def main():
         print(f"  {r['act_date']} {r['act_timing']:5} {r['role']:5} {r['side']:5} "
               f"{r['strategy_id']} {r['variant']} {r['company_name']}｜{r['detail'][:80]}")
     print(f"010 明天盯盤：{[(w['name'], w['streak']) for w in watch]}")
-    for n in notes[-3:]:
+    print("020 群聚日（與策略包原始數據明細對帳用）：")
+    for n in [n for n in notes if n.startswith("群聚日")] or ["  （這段期間沒有群聚日）"]:
+        print("  " + n)
+    for n in [n for n in notes if not n.startswith("群聚日")][-3:]:
         print("  " + n)
     out = ROOT / "out"
     out.mkdir(exist_ok=True)
