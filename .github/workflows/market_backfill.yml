@@ -10,6 +10,10 @@ on:
         description: '往回補幾個交易日'
         required: false
         default: '300'
+      refetch:
+        description: '已存在的日子也重抓（修正解析後用，填 1）'
+        required: false
+        default: '0'
 
 permissions:
   contents: read
@@ -25,6 +29,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           BACKFILL: ${{ github.event.inputs.days || '300' }}
+          REFETCH: ${{ github.event.inputs.refetch || '0' }}
         run: python3 scripts/market.py
       - name: 用回補的資料檢查事件型策略（只印不寫）
         env:
