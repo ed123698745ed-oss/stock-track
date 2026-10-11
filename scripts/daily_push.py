@@ -13,6 +13,7 @@
 import datetime as dt
 import json
 import os
+import pathlib
 import sys
 import urllib.request
 
@@ -59,8 +60,25 @@ def block_line(r):
     return "\n".join(lines)
 
 
-def compose(now, tmr, stg, run, next_day, problems):
+def watch_lines(watch):
+    if not watch:
+        return []
+    out = ["", f"▍明天盯盤（010 開板放空）　{len(watch)} 檔"]
+    for w in watch[:10]:
+        out.append(f"{w['name']} {w['code']}　已連 {w['streak']} 根漲停")
+    if len(watch) > 10:
+        out.append(f"…另有 {len(watch) - 10} 檔")
+    out.append("　收盤沒鎖漲停 → 收盤放空、下一交易日收盤回補（13:05 盤中會再提醒）")
+    return out
+
+
+def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False):
     head_day = md(next_day) if next_day else "下一個交易日"
+    if late:
+        out = [f"補充提醒｜{head_day} 新增訊號（稍晚公布的資料）"]
+        out += [f"⚠ {p}" for p in problems] + [""]
+        out += [strategy_line(r) for r in stg]
+        return "\n".join(out + ["", SITE])
     out = [f"交易提醒｜{head_day} 要做的事"]
 
     if run:
@@ -87,6 +105,8 @@ def compose(now, tmr, stg, run, next_day, problems):
     else:
         out.append(f"明天 {head_day} 沒有要進出場的部位。")
 
+    out += watch_lines(watch)
+
     pending = sum(1 for r in (tmr or []) + (stg or [])
                   if r.get("due_label") in ("今天", "未處理") and not r.get("checked"))
     if pending:
@@ -110,9 +130,36 @@ def push_line(text):
         return r.status
 
 
+def read_out(name):
+    p = pathlib.Path(__file__).resolve().parent.parent / "out" / name
+    try:
+        return json.loads(p.read_text("utf-8"))
+    except Exception:
+        return None
+
+
+def market_problems(today, cal):
+    """行情資料狀態 → 警告文字。沒抓到和沒訊號要分得出來。"""
+    out = []
+    for step, label in (("MARKET_OUTCOME", "行情抓取"), ("EVENT_OUTCOME", "事件型策略判斷")):
+        if os.environ.get(step, "success") != "success":
+            out.append(f"{label}失敗，A08／014／010／020 今天的結果可能不完整")
+    st = read_out("market_status.json")
+    if cal and cal.is_trading(today):
+        if not st or st.get("d") != today.isoformat():
+            out.append("今天的行情還沒抓到，事件型策略用的是前一個交易日的資料")
+        else:
+            if not st.get("has_otc"):
+                out.append("上櫃行情沒抓到，014 跌停家數今天不判斷")
+            if not st.get("has_margin"):
+                out.append("融資餘額尚未公布，020 今天稍晚（22:37）再判斷，有訊號會補推")
+    return out
+
+
 def main():
     now = dt.datetime.now(dt.timezone.utc)
     today = now.astimezone(TPE).date()
+    late = os.environ.get("LATE") == "1"
     problems = []
 
     tmr, e1 = safe(lambda: supa("v_tomorrow?select=*"))
@@ -133,13 +180,29 @@ def main():
         if next_day.year not in cal.years:
             next_day = None  # 休市日未公布，不硬算日期
 
-    text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems)
+    problems += market_problems(today, cal if hol else None)
+    if late:
+        # 晚間補推：只推第一次推播之後才出現的「明天」策略訊號
+        stg = [r for r in (stg or []) if r.get("due_label") == "明天" and not r.get("notified_at")]
+        if not stg:
+            print("沒有新增訊號，不補推")
+            return
+        problems = [p for p in problems if "融資" not in p]
+        text = compose(now, None, stg, None, next_day, problems, late=True)
+    else:
+        text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"))
     print(text)
     if os.environ.get("DRY_RUN") == "1":
         print("\nDRY_RUN：不推送")
     else:
         print("\nLINE 回應", push_line(text))
-    if (tmr is None and stg is None) or os.environ.get("CAL_OUTCOME", "success") != "success":
+        ids = [str(r["id"]) for r in (stg or []) if r.get("due_label") == "明天" and r.get("id")]
+        if ids:
+            safe(lambda: supa(f"strategy_actions?id=in.({','.join(ids)})", "PATCH",
+                              {"notified_at": now.isoformat()}))
+    failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME")
+              if os.environ.get(k, "success") != "success"]
+    if (tmr is None and stg is None) or failed:
         sys.exit(1)  # 訊息已送出；讓 Actions 顯示紅燈，不要靜靜綠燈
 
 

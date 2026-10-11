@@ -7,9 +7,15 @@ on:
         description: '只印訊息、不推 LINE（填 1）'
         required: false
         default: '0'
-  # 排在所有抓取（最晚 20:50 重大訊息）之後。GitHub 排程可能延遲十幾分鐘，晚間推播可以接受。
+      late:
+        description: '補推模式：只推還沒推過的新訊號（填 1）'
+        required: false
+        default: '0'
   schedule:
-    - cron: '7 13 * * 1-5'   # 台北 21:07
+    # 主推播：排在所有抓取（最晚 20:50 重大訊息）之後。GitHub 排程可能延遲十幾分鐘。
+    - cron: '7 13 * * 1-5'    # 台北 21:07
+    # 補推：融資餘額公布較晚，22:37 重抓一次；只有出現新訊號（例如 020）才推
+    - cron: '37 14 * * 1-5'   # 台北 22:37
 
 permissions:
   contents: read
@@ -17,14 +23,24 @@ permissions:
 jobs:
   push:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 更新日曆型策略訊號
+      - name: 抓今日行情（上市＋上櫃收盤、漲跌停、融資）
+        id: market
+        continue-on-error: true
+        run: python3 scripts/market.py
+
+      - name: 事件型策略（A08、014、010、020）
+        id: event
+        continue-on-error: true
+        run: python3 scripts/event_signals.py
+
+      - name: 日曆型策略（A01、A09、A10、009、021）
         id: cal
         continue-on-error: true
         run: python3 scripts/calendar_signals.py
@@ -33,6 +49,9 @@ jobs:
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          MARKET_OUTCOME: ${{ steps.market.outcome }}
+          EVENT_OUTCOME: ${{ steps.event.outcome }}
           CAL_OUTCOME: ${{ steps.cal.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          LATE: ${{ (github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py
