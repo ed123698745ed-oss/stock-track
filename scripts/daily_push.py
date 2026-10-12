@@ -180,6 +180,26 @@ def read_out(name):
         return None
 
 
+def unregistered_closures(cal, today):
+    """休市日表當成交易日、卻沒有任何行情的平日（多半是颱風假等臨時休市）。不自動登錄，等人確認。"""
+    try:
+        have = {r["d"] for r in supa("market_days?select=d&order=d.asc&limit=1000")}
+    except Exception:
+        return []
+    if not have:
+        return []
+    d, miss = dt.date.fromisoformat(min(have)), []
+    while d < today:
+        if d.year in cal.years and cal.is_trading(d) and d.isoformat() not in have:
+            miss.append(d)
+        d += dt.timedelta(days=1)
+    if not miss:
+        return []
+    days = "、".join(f"{x:%Y/%m/%d}" for x in miss[:10])
+    return [f"{days} 是平日但沒有行情，可能是颱風假等臨時休市（也可能是漏抓）。"
+            f"確認休市請到 Actions →「新增休市日」登錄；漏抓請跑「回補歷史行情」"]
+
+
 def market_problems(today, cal):
     """行情資料狀態 → 警告文字。沒抓到和沒訊號要分得出來。"""
     out = []
@@ -192,6 +212,8 @@ def market_problems(today, cal):
         out.append("內部人申報轉讓抓取失敗，019 今天可能漏掉訊號（明天會再掃最近 7 天）")
     if os.environ.get("EXRIGHT_OUTCOME", "success") != "success":
         out.append("除權息預告表抓取失敗，A11 今天可能漏掉 T-5 進場的訊號")
+    if cal:
+        out += unregistered_closures(cal, today)
     st = read_out("market_status.json")
     if cal and cal.is_trading(today):
         if not st or st.get("d") != today.isoformat():
