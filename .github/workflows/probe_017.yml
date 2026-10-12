@@ -24,34 +24,29 @@ jobs:
                      headers={"User-Agent": UA, "Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"}), timeout=40).read().decode("utf-8", "replace")
           def text(h): return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h)).strip()
           op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/t146sb10", headers={"User-Agent": UA}), timeout=30).read()
-          # doAction() 的內容：決定送出前補上哪些欄位
-          pg = op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/t146sb10", headers={"User-Agent": UA}), timeout=30).read().decode("utf-8","replace")
-          i = pg.find("function doAction"); print("doAction：", re.sub(r"\s+", " ", pg[i:i+1500]))
-          i = pg.find("function chkSelect"); print("chkSelect：", re.sub(r"\s+", " ", pg[i:i+800]))
-          i = pg.find('name="noticeKind"'); print("noticeKind 選項：", re.sub(r"\s+", " ", text(pg[i:i+2500]))[:900])
-          for kind in ("12",):
-              for typek in ("sii",):
-                  p = {"encodeURIComponent": 1, "step": 1, "firstin": "true", "off": 1, "scope": 2, "typek": typek, "TYPEK": typek,
-                       "selecttype": 0, "noticeDate": 2, "date": 4, "noticeKind": kind, "sort": 1}
-                  try:
-                      h = post("ajax_t146sb10", p)
-                  except Exception as e:
-                      print(kind, typek, "FAIL", e); continue
-                  rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S)
-                  hits = [r for r in rows if re.search(r"現金增資|現增", text(r))]
-                  print(f"\n=== noticeKind {kind} {typek}：{len(h)} chars，{len(rows)} 列，現增 {len(hits)} 列")
-                  print("   回應文字：", text(h)[:700])
-                  for r in hits[:6]: print("   ", text(r)[:220])
-                  if hits:
-                      r = hits[0]
-                      print("  按鈕原始：", re.sub(r"\s+", " ", r)[-900:])
-                      args = dict(re.findall(r"\.(\w+)\.value\s*=\s*'([^']*)'", r))
-                      print("  解析參數：", args)
-                      if args:
-                          try:
-                              d = post("ajax_t146sb10", {**{k: v for k, v in args.items()}, "firstin": "true", "off": 1})
-                              t = text(d); i = t.find("買賣")
-                              print("  內文：", t[:200], " … ", t[max(0, i-300):i+300])
-                          except Exception as e: print("  detail FAIL", e)
-                  time.sleep(2)
+          base = {"encodeURIComponent": 1, "step": 1, "firstin": 1, "off": 1, "keyword4": "", "code1": "", "TYPEK2": "",
+                  "checkbtn": "", "queryName": "co_id_1", "inpuType": "co_id", "TYPEK": "all", "co_id_1": "",
+                  "selecttype": 0, "noticeKind": 12, "sort": 1}
+          variants = {
+            "A scope2 sii 近1月": {**base, "scope": 2, "typek": "sii", "noticeDate": 2, "date": 4},
+            "B scope2 otc 近1月": {**base, "scope": 2, "typek": "otc", "noticeDate": 2, "date": 4},
+            "C scope2 sii 區間": {**base, "scope": 2, "typek": "sii", "noticeDate": 1, "yymmdd1": "115/09/01", "yymmdd2": "115/10/12"},
+            "D scope2 sii 近3月 kind11": {**base, "scope": 2, "typek": "sii", "noticeDate": 2, "date": 5, "noticeKind": 11},
+            "E scope1 co 2330 近1年": {**base, "scope": 1, "co_id_1": "2330", "co_id": "2330", "noticeDate": 2, "date": 7, "noticeKind": 0},
+          }
+          ok = None
+          for name, p in variants.items():
+              try:
+                  h = post("ajax_t146sb10", p)
+              except Exception as e:
+                  print(name, "FAIL", e); continue
+              rows = [r for r in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S) if "<td" in r]
+              print(f"\n=== {name}：{len(h)} chars，資料列 {len(rows)}")
+              for r in rows[:5]: print("   ", text(r)[:200])
+              if rows and not ok: ok = rows
+              time.sleep(2)
+          if ok:
+              hits = [r for r in ok if re.search(r"增資|新股", text(r))] or ok
+              r = hits[0]
+              print("\n按鈕原始：", re.sub(r"\s+", " ", r)[-1200:])
           PYEOF
