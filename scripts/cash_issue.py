@@ -300,7 +300,11 @@ def main():
     anns = list_announcements(today - dt.timedelta(days=days), today)
     cand = [a for a in anns if SUBJ.search(a[0]) and not SKIP.search(a[0])]
     # 撤銷／暫緩現增 → 原 D 作廢（依 004 規則）
-    void = {a[4]: a[0] for a in anns if CANCEL.search(a[0]) and not SKIP.search(a[0])}
+    # co → ((公告日, 時間), 主旨)：只有「比作廢公告更新」的正常公告才能恢復
+    void = {}
+    for a in sorted(anns, key=lambda a: (a[3], a[2])):
+        if CANCEL.search(a[0]) and not SKIP.search(a[0]):
+            void[a[4]] = ((a[3], a[2]), a[0])
     print(f"重大訊息 {len(anns)} 筆，現增認股／繳款類 {len(cand)} 筆")
     rows, seen, issues = [], {}, {}
     for subj, seq, tm, d8, co, typ, name in sorted(cand, key=lambda a: (a[3], a[2])):
@@ -313,7 +317,7 @@ def main():
             continue
         time.sleep(1.5)
         if not info and POSTPONE.search(txt):
-            void[co] = subj  # 繳款日程延後：原 D 作廢，等重訂後的新公告
+            void[co] = ((d8, tm), subj)  # 繳款日程延後：原 D 作廢，等重訂後的新公告
             seen.pop(co, None)
         if not info:
             print(f"  {co} {name} 略過（延後作業或無法解析）：{subj[:50]}")
@@ -331,7 +335,13 @@ def main():
                              "announced_on": roc(f"{int(d8[:4]) - 1911}/{d8[4:6]}/{d8[6:]}").isoformat()}
         if ok:
             seen[co] = build004(cal, co, name, info)  # 同一家公司後面的公告覆蓋前面的
-            void.pop(co, None)  # 重訂繳款期間 → 採新 D
+            if co in void and void[co][0] < (d8, tm):
+                void.pop(co)  # 比作廢更新的重訂公告 → 採新 D
+        elif co in seen:
+            seen.pop(co)  # 最新公告的比例更正到門檻以下：先前的訊號作廢
+            void[co] = ((d8, tm), f"比例更正為每仟股 {info['ratio']:.2f} 股，未達 50 股")
+    for co in void:
+        seen.pop(co, None)
     for rs in seen.values():
         rows += rs
 
@@ -345,13 +355,18 @@ def main():
     rows = [r for r in rows if r["act_date"] >= today.isoformat()]
     for r in sorted(rows, key=lambda r: r["act_date"]):
         print(f"  {r['act_date']} {r['act_timing']:5} {r['role']:5} 004 {r['company_name']}{r['company_code']}")
-    for co, subj in void.items():
+    for co, (_, subj) in void.items():
         print(f"  {co} 作廢原 004 日期：{subj[:60]}")
     if dry:
         print("DRY_RUN：不寫入")
         return
     for co in void:
-        supa(f"strategy_actions?strategy_id=eq.004&company_code=eq.{co}&act_date=gte.{today.isoformat()}",
+        # 只作廢「還沒進場」的計畫：進場日在明天以後的進場列，以及其對應的出場列。
+        # 已經進場（進場日 ≤ 今天）的部位，回補提醒保留，避免空單沒人提醒回補。
+        t = today.isoformat()
+        supa(f"strategy_actions?strategy_id=eq.004&company_code=eq.{co}&role=eq.entry&act_date=gt.{t}",
+             "PATCH", {"ignored": True})
+        supa(f"strategy_actions?strategy_id=eq.004&company_code=eq.{co}&role=eq.exit&pair_date=gt.{t}",
              "PATCH", {"ignored": True})
     if issues:
         supa("cash_issues?on_conflict=company_code,cycle", "POST", list(issues.values()),

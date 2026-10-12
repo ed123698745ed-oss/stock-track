@@ -105,7 +105,12 @@ def main():
         p = float(p)
         ref = (p - e["cash"] + e["sub_px"] * e["sub"]) / (1 + e["stock"] + e["sub"])
         drop = (p - ref) / p
-        face = fv.get(e["code"], 10.0)
+        face = fv.get(e["code"])
+        if face is None:
+            if e["stock"]:
+                print(f"  {e['code']} {e['name']} T0={e['t0']}：查不到面額，配股的稅拖曳算不出來，略過（不推估）")
+                continue
+            face = 10.0  # 沒有配股時面額不影響稅拖曳
         drag = (e["cash"] + e["stock"] * face) / p
         near = abs(drop - DROP) <= 0.02 or abs(drag - DRAG) <= 0.01
         ok = drop >= DROP and drag <= DRAG
@@ -118,6 +123,7 @@ def main():
         rs = leg("A11", "大幅除權息", e["code"], e["name"], e["t0"].isoformat(), "long", t5, "open", e["t0"], "close", STAT)
         for x in rs:
             x["detail"] = (("⚠ 接近門檻（回測用 T-1 收盤，結果可能翻轉）｜" if near else "") +
+                           "T-6 試算版（回測統計為 T-1 版，兩者篩選結果可能不同）｜" +
                            f"{e['t0']:%m/%d} 除權息｜{tag}｜" + x["detail"])
         rows += rs
 

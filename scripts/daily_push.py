@@ -97,6 +97,11 @@ def index_prep(cal, today):
     return out
 
 
+def warn_key(p):
+    import hashlib
+    return "warn:" + hashlib.md5(p.encode()).hexdigest()[:16]
+
+
 def board_key(r):
     """既有板塊（處置股、庫藏股、IPO…）一筆的識別：用顯示文字的雜湊，推過就記在 intraday_alerts。"""
     import hashlib
@@ -110,7 +115,7 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
         out += [f"⚠ {p}" for p in problems] + [""]
         out += [block_line(r) for r in (tmr or [])]
         out += [strategy_line(r) for r in stg]
-        return "\n".join(out + ["", SITE])
+        return fit("\n".join(out + ["", SITE]))
     out = [f"交易提醒｜{head_day} 要做的事"]
 
     if run:
@@ -146,9 +151,13 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
         out += ["", f"另有 {pending} 筆今天或之前的待辦還沒勾選。"]
     out += ["", SITE]
 
-    text = "\n".join(out)
-    if len(text) > 4800:  # LINE 單則上限 5000 字
-        text = text[:4700].rsplit("\n", 1)[0] + f"\n…（其餘請看網站）\n{SITE}"
+    return fit("\n".join(out))
+
+
+def fit(text):
+    """LINE 單則上限 5000（UTF-16 單位）；超過就截斷並指向網站。被截掉的項目不會標成已推播。"""
+    if len(text.encode("utf-16-le")) // 2 > 4800:
+        text = text[:4600].rsplit("\n", 1)[0] + f"\n…（其餘請看網站）\n{SITE}"
     return text
 
 
@@ -225,10 +234,15 @@ def main():
         stg = [r for r in (stg or []) if r.get("due_label") == "明天" and not r.get("notified_at")]
         sent, _ = safe(lambda: {x["key"] for x in supa(f"intraday_alerts?select=key&d=eq.{today.isoformat()}&key=like.tmr:*")})
         tmr = [r for r in (tmr or []) if r.get("due_label") == "明天" and board_key(r) not in (sent or set())] if sent is not None else []
-        if not stg and not tmr:
-            print("沒有新增訊號，不補推")
-            return
         problems = [p for p in problems if "融資" not in p]
+        warned, _ = safe(lambda: {x["key"] for x in supa(f"intraday_alerts?select=key&d=eq.{today.isoformat()}&key=like.warn:*")})
+        problems = [p for p in problems if warn_key(p) not in (warned or set())]
+        if not stg and not tmr and not problems:
+            print("沒有新增訊號，不補推")
+            if any(os.environ.get(k, "success") != "success" for k in
+                   ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME")):
+                sys.exit(1)  # 警告稍早已推過；仍讓 Actions 顯示紅燈
+            return
         text = compose(now, tmr, stg, None, next_day, problems, late=True)
     else:
         text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
@@ -238,11 +252,14 @@ def main():
         print("\nDRY_RUN：不推送")
     else:
         print("\nLINE 回應", push_line(text))
-        ids = [str(r["id"]) for r in (stg or []) if r.get("due_label") == "明天" and r.get("id")]
+        ids = [str(r["id"]) for r in (stg or []) if r.get("due_label") == "明天" and r.get("id")
+               and strategy_line(r) in text]  # 被截斷沒送出的不標記，補推會再送
         if ids:
             safe(lambda: supa(f"strategy_actions?id=in.({','.join(ids)})", "PATCH",
                               {"notified_at": now.isoformat()}))
-        keys = [{"d": today.isoformat(), "key": board_key(r)} for r in (tmr or []) if r.get("due_label") == "明天"]
+        keys = [{"d": today.isoformat(), "key": board_key(r)} for r in (tmr or [])
+                if r.get("due_label") == "明天" and block_line(r) in text]
+        keys += [{"d": today.isoformat(), "key": warn_key(p)} for p in problems]
         if keys:
             safe(lambda: supa("intraday_alerts?on_conflict=d,key", "POST", keys,
                               prefer="resolution=ignore-duplicates,return=minimal"))
