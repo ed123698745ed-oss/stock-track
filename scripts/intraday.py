@@ -28,10 +28,12 @@ A08_WARN, SCAN_014, WARN_014 = -4.5, -2.5, 90
 
 
 def f(x):
+    """MIS 價格欄位 → float；"-"、空白、0（沒有報價）一律回傳 None。"""
     try:
-        return float(str(x).split("_")[0])
+        v = float(str(x).split("_")[0])
     except (TypeError, ValueError):
         return None
+    return v if v > 0 else None
 
 
 def mis(chs):
@@ -49,7 +51,8 @@ def mis(chs):
 
 
 def last_price(x):
-    """最近成交價；兩筆成交之間 z 會是 "-"，改用最佳買價（鎖漲停時買價 = 漲停價）。"""
+    """最近成交價；兩筆成交之間 z 會是 "-"，改用最佳買價（鎖漲停時買價 = 漲停價）。
+    處置股分盤撮合時常常兩個都沒有 → None（報價不明，不判斷）。"""
     return f(x.get("z")) or f(x.get("b"))
 
 
@@ -128,12 +131,15 @@ def main():
             x = q.get(w["code"])
             if not x:
                 continue
+            px = last_price(x)
             locked = at_limit_up(x)
-            print(f"010 盯盤 {w['name']}{w['code']} 連{w['streak']} 現價 {last_price(x)} 漲停 {x.get('u')} "
-                  f"{'鎖漲停' if locked else '未鎖'}")
+            print(f"010 盯盤 {w['name']}{w['code']} 連{w['streak']} 現價 {px} 漲停 {x.get('u')} "
+                  f"{'鎖漲停' if locked else '報價不明，不判斷' if px is None else '未鎖'}")
+            if px is None:  # 沒有成交價也沒有買價（例如處置股分盤撮合空檔）：不能當成開板
+                continue
             if not locked and (dry or once(today, f"010:{w['code']}")):
                 alerts.append(f"【010 開板放空】{w['name']} {w['code']}（已連 {w['streak']} 根漲停）\n"
-                              f"　目前 {last_price(x)}、漲停 {x.get('u')}，未鎖漲停\n"
+                              f"　目前 {px:g}、漲停 {f(x.get('u')):g}，未鎖漲停\n"
                               f"　收盤仍沒漲停 → 收盤放空，下一交易日收盤回補（先確認券源）")
 
     if not alerts:

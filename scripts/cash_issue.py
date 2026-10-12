@@ -30,6 +30,8 @@ TH004 = 50.0  # 每仟股可認購股數 > 50（認購比例 > 5%）
 HOLD004 = 10  # 進場日起算第 10 個交易日收盤回補
 
 SUBJ = re.compile(r"認股基準日|繳款期間|繳納期間")
+CANCEL = re.compile(r"現金增資.{0,30}(撤銷|暫緩|停止|終止)|(撤銷|暫緩|停止|終止).{0,30}現金增資")
+POSTPONE = re.compile(r"原訂.{0,30}待訂定後另行公告|延後原定|延後.{0,6}作業日程|擬予?延後|另行訂定並公告")
 SKIP = re.compile(r"初次|延長募集|募集期間|特定人|子公司")
 
 _ctx = ssl.create_default_context()
@@ -130,7 +132,7 @@ RANGE = D_ + r"\s*(?:起)?\s*[~～至\-－]\s*" + D_
 def parse_detail(text, code=None):
     """內文 → {ratio 每仟股認購股數, ratio_src, pay_start, pay_end 原股東繳款期間, base 認股基準日}。
     繳款日程延後（待另行訂定）回傳 None；只有「發行價格待訂定」不算延後。"""
-    if re.search(r"原訂.{0,30}待訂定後另行公告|延後原定|延後.{0,6}作業日程|擬予?延後|另行訂定並公告", text):
+    if POSTPONE.search(text):
         return None
     p = re.search(r"原股東[^0-9]{0,30}?(?:繳款|繳納)[^0-9]{0,12}?" + RANGE, text)
     if not p:  # 只寫「股款繳納期間」沒有分原股東的格式
@@ -180,6 +182,8 @@ def main():
         pass
     anns = list_announcements(today - dt.timedelta(days=days), today)
     cand = [a for a in anns if SUBJ.search(a[0]) and not SKIP.search(a[0])]
+    # 撤銷／暫緩現增 → 原 D 作廢（依 004 規則）
+    void = {a[4]: a[0] for a in anns if CANCEL.search(a[0]) and not SKIP.search(a[0])}
     print(f"重大訊息 {len(anns)} 筆，現增認股／繳款類 {len(cand)} 筆")
     rows, seen = [], {}
     for subj, seq, tm, d8, co, typ, name in sorted(cand, key=lambda a: (a[3], a[2])):
@@ -191,6 +195,9 @@ def main():
             print(f"  {co} {name} 內文抓取失敗：{e}")
             continue
         time.sleep(1.5)
+        if not info and POSTPONE.search(txt):
+            void[co] = subj  # 繳款日程延後：原 D 作廢，等重訂後的新公告
+            seen.pop(co, None)
         if not info:
             print(f"  {co} {name} 略過（延後作業或無法解析）：{subj[:50]}")
             if os.environ.get("DEBUG") == "1":
@@ -202,14 +209,20 @@ def main():
               f"{'→ 004 符合' if ok else '（未達 50 股）'}")
         if ok:
             seen[co] = build004(cal, co, name, info)  # 同一家公司後面的公告覆蓋前面的
+            void.pop(co, None)  # 重訂繳款期間 → 採新 D
     for rs in seen.values():
         rows += rs
     rows = [r for r in rows if r["act_date"] >= today.isoformat()]
     for r in sorted(rows, key=lambda r: r["act_date"]):
         print(f"  {r['act_date']} {r['act_timing']:5} {r['role']:5} 004 {r['company_name']}{r['company_code']}")
+    for co, subj in void.items():
+        print(f"  {co} 作廢原 004 日期：{subj[:60]}")
     if dry:
         print("DRY_RUN：不寫入")
         return
+    for co in void:
+        supa(f"strategy_actions?strategy_id=eq.004&company_code=eq.{co}&act_date=gte.{today.isoformat()}",
+             "PATCH", {"ignored": True})
     if rows:
         supa("strategy_actions?on_conflict=strategy_id,variant,company_code,cycle,role",
              "POST", rows, prefer="resolution=merge-duplicates,return=minimal")

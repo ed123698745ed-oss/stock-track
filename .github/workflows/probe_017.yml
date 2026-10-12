@@ -1,0 +1,34 @@
+name: 探測增資股上市公告
+
+# 暫時性：確認 017 的公告查詢（t146sb10）參數與內文格式，確認後刪除。
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [.github/workflows/probe_017.yml]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: probe
+        run: |
+          python3 - <<'PYEOF'
+          import json, re, ssl, urllib.request, urllib.parse, http.cookiejar, time
+          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
+          CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
+          op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.HTTPSHandler(context=CTX))
+          def get(url, data=None, hdr=None):
+              h = {"User-Agent": UA}; h.update(hdr or {})
+              return op.open(urllib.request.Request(url, data=data, headers=h), timeout=40).read().decode("utf-8", "replace")
+          def text(h): return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h)).strip()
+          # 1) 查詢頁的表單欄位
+          page = get("https://mopsov.twse.com.tw/mops/web/t146sb10")
+          print("頁面", len(page))
+          for tag in re.findall(r"<(?:input|select)[^>]*>", page)[:60]:
+              print("  ", re.sub(r"\s+", " ", tag)[:200])
+          for m in re.finditer(r"bool_t\w+|noticeKind|ajax_t146sb10[^'\"]*", page):
+              pass
+          print("JS 參數片段：", set(re.findall(r"bool_t\w+|noticeKind\w*|DATE1|SKEY|typek|TYPEK", page)))
+          i = page.find("noticeKind"); print(page[max(0, i-800):i+800] if i >= 0 else "無 noticeKind")
+          PYEOF
