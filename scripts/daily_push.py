@@ -72,7 +72,30 @@ def watch_lines(watch):
     return out
 
 
-def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False):
+IDX_NAME = {"msci": "MSCI", "tw50": "台灣50（0050）"}
+
+
+def index_prep(cal, today):
+    """指數調整生效日前兩個交易日的晚上提醒：準備 015 名單、確認券源。"""
+    if not cal:
+        return []
+    target = cal.shift(today, 2)
+    try:
+        rows = supa("calendar?select=strategy_code,event_date&kind=eq.effective"
+                    f"&event_date=eq.{target.isoformat()}")
+    except Exception:
+        return []
+    codes = sorted({r["strategy_code"] for r in rows if r.get("strategy_code") in IDX_NAME})
+    if not codes:
+        return []
+    out = ["", f"▍提前準備（{md(target)} 指數調整生效）"]
+    for c in codes:
+        out.append(f"{IDX_NAME[c]}：後天收盤生效")
+    out.append("　確認新增／刪除名單、放空腳的券源；015 生效日後第 1 個交易日開盤進場")
+    return out
+
+
+def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep=None):
     head_day = md(next_day) if next_day else "下一個交易日"
     if late:
         out = [f"補充提醒｜{head_day} 新增訊號（稍晚公布的資料）"]
@@ -106,6 +129,7 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False):
         out.append(f"明天 {head_day} 沒有要進出場的部位。")
 
     out += watch_lines(watch)
+    out += prep or []
 
     pending = sum(1 for r in (tmr or []) + (stg or [])
                   if r.get("due_label") in ("今天", "未處理") and not r.get("checked"))
@@ -190,7 +214,8 @@ def main():
         problems = [p for p in problems if "融資" not in p]
         text = compose(now, None, stg, None, next_day, problems, late=True)
     else:
-        text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"))
+        text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
+                       prep=index_prep(cal if hol else None, today))
     print(text)
     if os.environ.get("DRY_RUN") == "1":
         print("\nDRY_RUN：不推送")

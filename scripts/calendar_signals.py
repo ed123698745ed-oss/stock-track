@@ -211,6 +211,33 @@ def build(cal, years, tsmc_calls=()):
     return rows, skipped
 
 
+# ---------------- 015 ETF 新增及刪除股（提醒型）----------------
+S015 = [  # (指數代碼, 變體, 方向, 說明, n, 勝率, p)
+    ("msci", "MSCI多空", "long", "等額買刪除股＋放空新增股", 40, 85.0, "<0.0001"),
+    ("tw50", "台灣50多空", "long", "等額買刪除股＋放空納入股", 47, 76.6, "<0.0001"),
+    ("msci", "MSCI新增股放空", "short", "放空 MSCI 標準型新增股", 90, 75.6, "<0.0001"),
+]
+
+
+def build015(cal, effective):
+    """effective：[(指數代碼 msci/tw50, 生效日 D)]，來自既有「指數調整」行事曆。
+    D+1 開盤進場、第 3 個交易日收盤平倉。名單由使用者確認（提醒型，不自動抓成分股）。"""
+    rows = []
+    for code, d in effective:
+        if not cal.known(d):
+            continue
+        ent, ext = cal.shift(d, 1), cal.shift(d, 3)
+        for idx, var, side, what, n, win, p in S015:
+            if idx != code:
+                continue
+            rs = leg("015", var, "LIST", what, d.isoformat(), side, ent, "open", ext, "close",
+                     {"name": "ETF新增及刪除股", "n": n, "win": win, "p": p})
+            for x in rs:
+                x["detail"] = f"生效日 {d.month}/{d.day}，名單請對照指數公告｜放空腳先確認券源｜" + x["detail"]
+            rows += rs
+    return rows
+
+
 # ---------------- Supabase ----------------
 def supa(path, method="GET", payload=None, prefer="return=minimal"):
     url = os.environ["SUPABASE_URL"].strip().rstrip("/") + "/rest/v1/" + path
@@ -250,6 +277,13 @@ def main():
                           manual.get("tsmc_earnings_calls", []))
     # 只寫今天以後的列。訊號通常提前數月就寫入，過去的列留在表裡（保留勾選狀態）；
     # 第一次上線時也不會把早就過去的進出場當成「未處理」冒出來。
+    try:  # 015：讀既有「指數調整」行事曆的生效日
+        eff = supa("calendar?select=strategy_code,event_date&kind=eq.effective"
+                   f"&event_date=gte.{(today - dt.timedelta(days=10)).isoformat()}")
+        rows += build015(cal, sorted({(r["strategy_code"], D.fromisoformat(r["event_date"]))
+                                      for r in eff if r.get("strategy_code") in ("msci", "tw50")}))
+    except Exception as e:
+        skipped.append(f"015（讀取指數調整行事曆失敗：{e}）")
     rows = [r for r in rows if r["act_date"] >= today.isoformat()]
     skipped = [x for x in skipped if not x.startswith(("A", "009")) or str(today.year - 1) not in x]
 
