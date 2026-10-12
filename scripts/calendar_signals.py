@@ -211,6 +211,38 @@ def build(cal, years, tsmc_calls=()):
     return rows, skipped
 
 
+# ---------------- 021 台積電法說日（公開資訊觀測站「法人說明會一覽」）----------------
+def parse_calls(html, code="2330"):
+    """t100sb02_1 結果頁 → [YYYY-MM-DD]。每列：公司代號、公司名稱、召開日期(民國)、時間…"""
+    import re
+    out = set()
+    for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.S):
+        cells = [re.sub(r"<[^>]+>|&nbsp;|\s+", " ", c).strip()
+                 for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+        if len(cells) >= 3 and cells[0] == code:
+            m = re.fullmatch(r"(\d{2,3})/(\d{2})/(\d{2})", cells[2])
+            if m:
+                out.add(f"{int(m.group(1)) + 1911}-{m.group(2)}-{m.group(3)}")
+    return sorted(out)
+
+
+def fetch_tsmc_calls(years):
+    import urllib.parse
+    ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/128.0 Safari/537.36")
+    found = set()
+    for y in years:
+        data = urllib.parse.urlencode({"encodeURIComponent": 1, "step": 1, "firstin": 1, "off": 1,
+                                       "TYPEK": "sii", "year": str(y - 1911), "month": "all",
+                                       "co_id": "2330"}).encode()
+        req = urllib.request.Request("https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1",
+                                     data=data, headers={"User-Agent": ua})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            found |= set(parse_calls(r.read().decode("utf-8", "replace")))
+        time.sleep(2)
+    return sorted(found)
+
+
 # ---------------- 015 ETF 新增及刪除股（提醒型）----------------
 S015 = [  # (指數代碼, 變體, 方向, 說明, n, 勝率, p)
     ("msci", "MSCI多空", "long", "等額買刪除股＋放空新增股", 40, 85.0, "<0.0001"),
@@ -273,8 +305,15 @@ def main():
     today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date()
     manual = json.loads((ROOT / "config" / "manual_events.json").read_text("utf-8"))
 
+    calls = set(manual.get("tsmc_earnings_calls", []))
+    try:  # 021：自動抓法說日，失敗時只用手動清單
+        auto = fetch_tsmc_calls([today.year, today.year + 1])
+        print(f"台積電法說日（公開資訊觀測站）：{auto}")
+        calls |= set(auto)
+    except Exception as e:
+        print(f"⚠ 台積電法說日抓取失敗，只用手動清單：{e}")
     rows, skipped = build(cal, [today.year - 1, today.year, today.year + 1],
-                          manual.get("tsmc_earnings_calls", []))
+                          sorted(c for c in calls if c >= (today - dt.timedelta(days=30)).isoformat()))
     # 只寫今天以後的列。訊號通常提前數月就寫入，過去的列留在表裡（保留勾選狀態）；
     # 第一次上線時也不會把早就過去的進出場當成「未處理」冒出來。
     try:  # 015：讀既有「指數調整」行事曆的生效日
