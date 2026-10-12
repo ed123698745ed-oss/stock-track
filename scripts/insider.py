@@ -82,14 +82,19 @@ def main():
     print(f"符合（一般交易＋法人、非變更）事件 {len(events)} 個")
 
     held = {}  # 本策略自己的持倉：code → 最後出場日
-    for x in supa("strategy_actions?select=company_code,act_date&strategy_id=eq.019&role=eq.exit"):
+    own = set()  # 已寫入過的事件（重跑同一事件時不能被自己的出場列擋掉）
+    for x in supa("strategy_actions?select=company_code,act_date,cycle&strategy_id=eq.019&role=eq.exit&ignored=is.false"):
         c, e = x["company_code"], dt.date.fromisoformat(x["act_date"])
+        own.add((c, x["cycle"]))
         held[c] = max(held.get(c, e), e)
 
     rows = []
     for (t, code), rs in sorted(events.items()):
         r0 = rs[0]
         base = max((x for x in tdays if x <= t), default=None)
+        if cal.is_trading(t) and base != t:
+            print(f"  {t} {code} {r0['name']}：申報日加權收盤還沒抓到，無法判斷月線，略過（明天會再掃）")
+            continue
         hist = [taiex[x] for x in tdays if x <= t][-MA:] if base else []
         if len(hist) < MA:
             print(f"  {t} {code} {r0['name']}：加權指數歷史不足，略過")
@@ -102,7 +107,7 @@ def main():
         if not ent or not cal.known(ent):
             print(f"  {t} {code} {r0['name']}：休市日未公布，略過")
             continue
-        if code in held and ent <= held[code]:
+        if (code, t.isoformat()) not in own and code in held and ent <= held[code]:
             print(f"  {t} {code} {r0['name']}：持有中（到 {held[code]}），略過")
             continue
         ext = cal.shift(ent, HOLD019 - 1)

@@ -81,8 +81,9 @@ def c014(days, cal):
 
 
 # ---------------- 010 ----------------
-def streaks(days):
-    """每檔股票截至每一天的連續收漲停天數。缺資料（停牌）中斷。回傳 list[dict 代號→天數]。"""
+def streaks(days, cal=None):
+    """每檔股票截至每一天的連續收漲停天數。缺資料（停牌）或漲停未知 → 中斷。
+    以 market_days 的列當交易日序列（休市日表沒有颱風假、舊年度，不能拿來判斷缺日）。"""
     out, cur = [], {}
     for r in days:
         nxt = {}
@@ -95,12 +96,12 @@ def streaks(days):
 
 def c010(days, cal):
     rows = []
-    st = streaks(days)
+    st = streaks(days, cal)
     for i in range(1, len(days)):
         t = _d(days[i]["d"])
         for code, s in days[i]["stocks"].items():
             prev = st[i - 1].get(code, 0)
-            if prev >= C010_STREAK and not s.get("lu"):
+            if prev >= C010_STREAK and s.get("lu") is False:  # 漲停未知（None）不算開板
                 rs = leg("010", "開板放空", code, s.get("n") or code, t.isoformat(), "short",
                          t, "close", cal.shift(t, 1), "close", STAT["010"])
                 for x in rs:
@@ -109,11 +110,11 @@ def c010(days, cal):
     return rows
 
 
-def watch010(days):
+def watch010(days, cal=None):
     """截至最後一天、已連續 ≥ 4 天收漲停的股票：下一交易日若收盤沒漲停 → 收盤放空。"""
     if not days:
         return []
-    st = streaks(days)[-1]
+    st = streaks(days, cal)[-1]
     last = days[-1]["stocks"]
     return sorted(({"code": c, "name": last[c].get("n") or c, "streak": n, "close": last[c]["c"]}
                    for c, n in st.items() if n >= C010_STREAK), key=lambda x: -x["streak"])
@@ -191,8 +192,8 @@ def c020(days, cal, today=None):
         if not second:
             continue
         t = _d(r["d"])
-        names = "、".join(f"{r['stocks'][c].get('n') or c}{c}" for c in sigs[:40])
-        more = f" 等共 {len(sigs)} 檔" if len(sigs) > 40 else ""
+        names = "、".join(f"{r['stocks'][c].get('n') or c}{c}" for c in sigs)  # 完整名單，不截斷
+        more = ""
         rs = leg("020", "二次群聚日", "BASKET", f"融資大減籃 {len(sigs)} 檔", t.isoformat(), "long",
                  cal.shift(t, 1), "open", cal.shift(t, M["hold"]), "close", STAT["020"])
         for x in rs:
@@ -204,7 +205,7 @@ def c020(days, cal, today=None):
 def build(days, cal):
     days = sorted(days, key=lambda r: r["d"])
     r020, notes = c020(days, cal)
-    return a08(days, cal) + c014(days, cal) + c010(days, cal) + r020, watch010(days), notes
+    return a08(days, cal) + c014(days, cal) + c010(days, cal) + r020, watch010(days, cal), notes
 
 
 def main():

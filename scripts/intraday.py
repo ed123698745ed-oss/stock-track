@@ -1,7 +1,7 @@
 """盤中提醒（約 13:05、13:15 各跑一次）：A08、014、010 都是訊號日「當天收盤」進場，晚上推播來不及。
 
   A08  加權指數目前跌幅 ≤ −4.5%                → 提醒：收盤 ≤ −5% 就收盤買進
-  014  加權指數 ≤ −2.5% 時才掃全市場跌停家數 ≥ 90  → 提醒：收盤 ≥ 100 家就收盤買進
+  014  掃全市場跌停家數 ≥ 90                    → 提醒：收盤 ≥ 100 家就收盤買進
   010  昨天已連 ≥ 4 根漲停的股票，現在沒鎖漲停     → 提醒：收盤沒漲停就收盤放空
 
 門檻故意比正式條件寬一點，是「快到了，請看盤」；最後是否成立以收盤為準，晚上會記錄。
@@ -74,11 +74,26 @@ def at_limit_up(x):
     return (p is not None and p >= u - 1e-9) or (bid is not None and bid >= u - 1e-9)
 
 
+_SENT = None
+_PENDING = []
+
+
 def once(today, key):
-    """同一天同一個 key 只回傳一次 True。"""
-    r = supa("intraday_alerts?on_conflict=d,key", "POST", {"d": today.isoformat(), "key": key},
-             prefer="resolution=ignore-duplicates,return=representation")
-    return bool(r)
+    """同一天同一個 key 只提醒一次。這裡只檢查；LINE 確定送出後才由 mark_sent() 記錄，
+    送失敗的下一輪（13:15）會再送。"""
+    global _SENT
+    if _SENT is None:
+        _SENT = {x["key"] for x in supa(f"intraday_alerts?select=key&d=eq.{today.isoformat()}")}
+    if key in _SENT:
+        return False
+    _PENDING.append(key)
+    return True
+
+
+def mark_sent(today):
+    if _PENDING:
+        supa("intraday_alerts?on_conflict=d,key", "POST", [{"d": today.isoformat(), "key": k} for k in _PENDING],
+             prefer="resolution=ignore-duplicates,return=minimal")
 
 
 def main():
@@ -103,8 +118,8 @@ def main():
     if pct is not None and pct <= A08_WARN and (dry or once(today, "A08")):
         alerts.append(f"【A08 大盤-5%】加權目前 {pct:+.2f}%\n　收盤 ≤ −5% → 收盤買進（加權指數），持有 5 個交易日後收盤賣出")
 
-    # 014：大盤弱才掃全市場，平常不浪費請求
-    if pct is not None and pct <= SCAN_014:
+    # 014：每次都掃全市場跌停家數（正式策略沒有大盤跌幅條件）
+    if True:
         last = supa("market_days?select=d,stocks&order=d.desc&limit=1")[0]
         chs = [f"{'tse' if s.get('m') == 'L' else 'otc'}_{c}.tw" for c, s in last["stocks"].items()]
         quotes = mis(chs)
@@ -122,7 +137,7 @@ def main():
     # 010：昨天已連 ≥ 4 根漲停的股票
     days = supa("market_days?select=d,stocks&order=d.desc&limit=12")
     days = [d for d in sorted(days, key=lambda r: r["d"]) if d["d"] < today.isoformat()]
-    watch = watch010(days)
+    watch = watch010(days, cal)
     if watch:
         mk = {c: s.get("m") for c, s in days[-1]["stocks"].items()}
         q = {x.get("c"): x for x in mis([f"{'tse' if mk.get(w['code']) == 'L' else 'otc'}_{w['code']}.tw"
@@ -150,6 +165,7 @@ def main():
         print("\nDRY_RUN：不推送")
     else:
         print("LINE 回應", push_line(text))
+        mark_sent(today)
 
 
 if __name__ == "__main__":

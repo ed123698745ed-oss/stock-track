@@ -79,7 +79,7 @@ def stock_row(close, sign, diff, open_, vol):
     if close is None:
         return None
     if diff is None:  # 除權息、新上市等漲跌欄不是數字：有效行情日照記，漲跌停無法判斷
-        return {"c": close, "lu": False, "ld": False, "v": open_ is not None and (vol or 0) > 0}
+        return {"c": close, "lu": None, "ld": None, "v": open_ is not None and (vol or 0) > 0}  # None＝未知
     s = re.sub(r"<[^>]+>", "", str(sign or "")).strip()
     ref = close - diff if s == "+" else close + diff if s == "-" else close
     if ref <= 0:
