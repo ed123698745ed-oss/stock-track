@@ -41,6 +41,21 @@ jobs:
               except Exception as e:
                   print(name, "FAIL", e); continue
               rows = [r for r in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S) if "<td" in r]
+              if name.startswith("A"):
+                  print("  表單：", [re.sub(r"\s+", " ", f)[:300] for f in re.findall(r"<form[^>]*>", h)])
+                  print("  欄位：", [re.sub(r"\s+", " ", f)[:200] for f in re.findall(r"<input[^>]*>", h)][:40])
+                  forms = re.findall(r"<form[^>]*name=['\"]?(\w+)['\"]?[^>]*action=['\"]?([^'\" >]+)[^>]*>(.*?)</form>", h, re.S)
+                  for fname, act, body in forms:
+                      fields = dict(re.findall(r"name=['\"]?([\w\-]+)['\"]?[^>]*value\s*=\s*['\"]([^'\"]*)", body))
+                      print(f"  → 送出 {fname} {act} {fields}")
+                      try:
+                          h2 = post(act.split("/")[-1], fields)
+                          rows2 = [r for r in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h2, re.S) if "<td" in r]
+                          print(f"    第二段：{len(h2)} chars，資料列 {len(rows2)}")
+                          for r in rows2[:8]: print("     ", text(r)[:220])
+                          hits = [r for r in rows2 if re.search(r"增資|新股", text(r))]
+                          if hits: print("    現增列原始：", re.sub(r"\s+", " ", hits[0])[-1500:])
+                      except Exception as e: print("    FAIL", e)
               print(f"\n=== {name}：{len(h)} chars，資料列 {len(rows)}")
               for r in rows[:5]: print("   ", text(r)[:200])
               if rows and not ok: ok = rows
