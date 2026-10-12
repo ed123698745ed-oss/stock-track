@@ -51,9 +51,9 @@ def mis(chs):
 
 
 def last_price(x):
-    """最近成交價；兩筆成交之間 z 會是 "-"，改用最佳買價（鎖漲停時買價 = 漲停價）。
-    處置股分盤撮合時常常兩個都沒有 → None（報價不明，不判斷）。"""
-    return f(x.get("z")) or f(x.get("b"))
+    """最近成交價；兩筆成交之間 z 會是 "-"，改用最佳買價、再用最佳賣價。
+    三個都沒有（例如瞬間價格穩定措施的試撮空檔）→ None。"""
+    return f(x.get("z")) or f(x.get("b")) or f(x.get("a"))
 
 
 def at_limit_down(x):
@@ -134,12 +134,12 @@ def main():
             px = last_price(x)
             locked = at_limit_up(x)
             print(f"010 盯盤 {w['name']}{w['code']} 連{w['streak']} 現價 {px} 漲停 {x.get('u')} "
-                  f"{'鎖漲停' if locked else '報價不明，不判斷' if px is None else '未鎖'}")
-            if px is None:  # 沒有成交價也沒有買價（例如處置股分盤撮合空檔）：不能當成開板
-                continue
+                  f"{'鎖漲停' if locked else '未鎖（報價暫缺）' if px is None else '未鎖'}")
             if not locked and (dry or once(today, f"010:{w['code']}")):
+                now_txt = f"目前 {px:g}" if px is not None else "盤中報價暫缺（請自行看盤）"
+                u = f(x.get("u"))
                 alerts.append(f"【010 開板放空】{w['name']} {w['code']}（已連 {w['streak']} 根漲停）\n"
-                              f"　目前 {px:g}、漲停 {f(x.get('u')):g}，未鎖漲停\n"
+                              f"　{now_txt}、漲停 {u if u is None else format(u, 'g')}，未鎖漲停\n"
                               f"　收盤仍沒漲停 → 收盤放空，下一交易日收盤回補（先確認券源）")
 
     if not alerts:
