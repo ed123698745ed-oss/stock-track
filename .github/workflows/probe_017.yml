@@ -9,7 +9,9 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    env:
+      PYTHONUNBUFFERED: '1'
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: 004＋017 DRY_RUN
@@ -17,6 +19,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           DRY_RUN: '1'
-          DAYS: '100'
-          PERIOD017: '5'
+          DAYS: '70'
+          PERIOD017: '4'
         run: python3 scripts/cash_issue.py

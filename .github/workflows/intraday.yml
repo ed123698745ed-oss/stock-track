@@ -24,6 +24,8 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      PYTHONUNBUFFERED: '1'
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
