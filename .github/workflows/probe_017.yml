@@ -1,6 +1,6 @@
 name: 探測增資股上市公告
 
-# 暫時性：確認 017 的公告查詢（t146sb10）參數與內文格式，確認後刪除。
+# 暫時性：DRY_RUN 驗證 004＋017（現增比例 100 天、上市公告 3 個月），確認後刪除。
 on:
   push:
     branches: [claude/strategy-trigger-tracking-dccm6s]
@@ -9,50 +9,14 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 40
     steps:
-      - name: probe
-        run: |
-          python3 - <<'PYEOF'
-          import json, re, ssl, urllib.request, urllib.parse, http.cookiejar, time
-          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
-          CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
-          op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.HTTPSHandler(context=CTX))
-          def post(params):
-              data = urllib.parse.urlencode(params).encode()
-              return op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/ajax_t146sb10", data=data,
-                     headers={"User-Agent": UA, "Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"}), timeout=40).read().decode("utf-8", "replace")
-          def text(h): return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h)).strip()
-          op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/t146sb10", headers={"User-Agent": UA}), timeout=30).read()
-          for kind in ("12", "11"):
-              pass
-          for kind in ("12", "11"):
-              for typek in ("sii", "otc"):
-                  first = post({"encodeURIComponent": 1, "step": 1, "firstin": 1, "off": 1, "scope": 2, "typek": typek,
-                                "selecttype": 0, "noticeDate": 2, "date": 4, "noticeKind": kind, "sort": 1})
-                  fields = dict(re.findall(r"<input type='hidden' name='(\w+)' value='([^']*)'", first))
-                  rpts = re.findall(r"rpt\.value='(\w+)'", first)
-                  print(f"\n=== kind {kind} {typek}：rpt {rpts}")
-                  for rpt in rpts:
-                      h = post({**fields, "rpt": rpt})
-                      rows = [r for r in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S) if "<td" in r]
-                      hits = [r for r in rows if re.search(r"現金增資|現增", text(r)) and not re.search(r"初次|盈餘|權利證書", text(r))]
-                      print(f"  {rpt}：{len(h)} chars，{len(rows)} 列，現增 {len(hits)} 列")
-                      for r in (hits or rows)[:6]: print("    ", text(r)[:220])
-                      if hits:
-                          raw = re.sub(r"\s+", " ", hits[0])
-                          print("  現增列原始：", raw[-1200:])
-                          args = dict(re.findall(r"\.(\w+)\.value\s*=\s*['\"]([^'\"]*)['\"]", hits[0]))
-                          print("  按鈕參數：", args)
-                          if args:
-                              try:
-                                  act = re.search(r'action="/mops/web/(\w+)"', hits[0]).group(1)
-                                  data = urllib.parse.urlencode({"firstin": 1, "off": 1, "step": args.get("step", "2"), **args}).encode()
-                                  d = op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/" + act, data=data,
-                                      headers={"User-Agent": UA, "Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"}), timeout=40).read().decode("utf-8", "replace")
-                                  t = text(d); i = t.find("買賣")
-                                  print("  內文前段：", t[:300])
-                                  print("  內文『買賣』附近：", t[max(0, i-400):i+300])
-                              except Exception as e: print("  detail FAIL", e)
-                      time.sleep(2)
-          PYEOF
+      - uses: actions/checkout@v4
+      - name: 004＋017 DRY_RUN
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DRY_RUN: '1'
+          DAYS: '100'
+          PERIOD017: '5'
+        run: python3 scripts/cash_issue.py
