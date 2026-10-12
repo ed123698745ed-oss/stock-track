@@ -39,11 +39,18 @@ _op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookie
                                   urllib.request.HTTPSHandler(context=_ctx))
 
 
-def _get(url, data=None, hdr=None):
+def _get(url, data=None, hdr=None, tries=3):
     h = {"User-Agent": UA}
     h.update(hdr or {})
-    with _op.open(urllib.request.Request(url, data=data, headers=h), timeout=40) as r:
-        return r.read().decode("utf-8", "replace")
+    last = None
+    for i in range(tries):  # MOPS 偶爾逾時，重試
+        try:
+            with _op.open(urllib.request.Request(url, data=data, headers=h), timeout=40) as r:
+                return r.read().decode("utf-8", "replace")
+        except Exception as e:
+            last = e
+            time.sleep(5 * (i + 1))
+    raise last
 
 
 def mops(params):
@@ -133,14 +140,18 @@ def main():
     rows, seen = [], {}
     for subj, seq, tm, d8, co, typ, name in sorted(cand, key=lambda a: (a[3], a[2])):
         try:
-            info = parse_detail(_text(mops({"step": 2, "firstin": 1, "off": 1, "seq_no": seq,
-                                            "spoke_time": tm, "spoke_date": d8, "co_id": co, "TYPEK": typ})))
+            txt = _text(mops({"step": 2, "firstin": 1, "off": 1, "seq_no": seq,
+                              "spoke_time": tm, "spoke_date": d8, "co_id": co, "TYPEK": typ}))
+            info = parse_detail(txt)
         except Exception as e:
             print(f"  {co} {name} 內文抓取失敗：{e}")
             continue
         time.sleep(1.5)
         if not info:
             print(f"  {co} {name} 略過（延後作業或無法解析）：{subj[:50]}")
+            if os.environ.get("DEBUG") == "1":
+                i = txt.find("說明")
+                print("     內文：", txt[i:i + 900])
             continue
         ok = info["ratio"] > TH004
         print(f"  {co} {name} 每仟股 {info['ratio']:.2f} 股 繳款 {info['pay_start']}~{info['pay_end']} "
