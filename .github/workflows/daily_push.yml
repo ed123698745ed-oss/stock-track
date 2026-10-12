@@ -40,6 +40,11 @@ jobs:
         continue-on-error: true
         run: python3 scripts/event_signals.py
 
+      - name: 現增策略（004）
+        id: cash
+        continue-on-error: true
+        run: python3 scripts/cash_issue.py
+
       - name: 日曆型策略（A01、A09、A10、009、021）
         id: cal
         continue-on-error: true
@@ -52,6 +57,7 @@ jobs:
           MARKET_OUTCOME: ${{ steps.market.outcome }}
           EVENT_OUTCOME: ${{ steps.event.outcome }}
           CAL_OUTCOME: ${{ steps.cal.outcome }}
+          CASH_OUTCOME: ${{ steps.cash.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           LATE: ${{ (github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py
