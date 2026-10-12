@@ -2,12 +2,17 @@ name: 探測 019
 on:
   push:
     branches: [claude/strategy-trigger-tracking-dccm6s]
-    paths: [probe/**, .github/workflows/probe_019.yml]
+    paths: [scripts/insider.py, .github/workflows/probe_019.yml]
 jobs:
   p:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env: {PYTHONUNBUFFERED: '1'}
+    timeout-minutes: 30
+    env:
+      PYTHONUNBUFFERED: '1'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      DRY_RUN: '1'
+      DAYS: '90'
     steps:
       - uses: actions/checkout@v4
-      - run: python3 probe/p019.py
+      - run: python3 scripts/insider.py

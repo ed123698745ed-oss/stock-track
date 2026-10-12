@@ -46,6 +46,11 @@ jobs:
         continue-on-error: true
         run: python3 scripts/cash_issue.py
 
+      - name: 內部人申報轉讓（019）
+        id: insider
+        continue-on-error: true
+        run: python3 scripts/insider.py
+
       - name: 日曆型策略（A01、A09、A10、009、021）
         id: cal
         continue-on-error: true
@@ -59,6 +64,7 @@ jobs:
           EVENT_OUTCOME: ${{ steps.event.outcome }}
           CAL_OUTCOME: ${{ steps.cal.outcome }}
           CASH_OUTCOME: ${{ steps.cash.outcome }}
+          INSIDER_OUTCOME: ${{ steps.insider.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           LATE: ${{ (github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py

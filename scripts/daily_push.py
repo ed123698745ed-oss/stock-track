@@ -170,6 +170,8 @@ def market_problems(today, cal):
             out.append(f"{label}失敗，A08／014／010／020 今天的結果可能不完整")
     if os.environ.get("CASH_OUTCOME", "success") != "success":
         out.append("現增公告抓取失敗，004 今天可能漏掉新公告（明天會再掃最近 7 天）")
+    if os.environ.get("INSIDER_OUTCOME", "success") != "success":
+        out.append("內部人申報轉讓抓取失敗，019 今天可能漏掉訊號（明天會再掃最近 7 天）")
     st = read_out("market_status.json")
     if cal and cal.is_trading(today):
         if not st or st.get("d") != today.isoformat():
@@ -227,7 +229,7 @@ def main():
         if ids:
             safe(lambda: supa(f"strategy_actions?id=in.({','.join(ids)})", "PATCH",
                               {"notified_at": now.isoformat()}))
-    failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME")
+    failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME")
               if os.environ.get(k, "success") != "success"]
     if (tmr is None and stg is None) or failed:
         sys.exit(1)  # 訊息已送出；讓 Actions 顯示紅燈，不要靜靜綠燈
