@@ -18,17 +18,34 @@ jobs:
           UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
           CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
           op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.HTTPSHandler(context=CTX))
-          def get(url, data=None, hdr=None):
-              h = {"User-Agent": UA}; h.update(hdr or {})
-              return op.open(urllib.request.Request(url, data=data, headers=h), timeout=40).read().decode("utf-8", "replace")
+          def post(path, params):
+              data = urllib.parse.urlencode(params).encode()
+              return op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/" + path, data=data,
+                     headers={"User-Agent": UA, "Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"}), timeout=40).read().decode("utf-8", "replace")
           def text(h): return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h)).strip()
-          # 1) 查詢頁的表單欄位
-          page = get("https://mopsov.twse.com.tw/mops/web/t146sb10")
-          print("頁面", len(page))
-          for tag in re.findall(r"<(?:input|select)[^>]*>", page)[:60]:
-              print("  ", re.sub(r"\s+", " ", tag)[:200])
-          for m in re.finditer(r"bool_t\w+|noticeKind|ajax_t146sb10[^'\"]*", page):
-              pass
-          print("JS 參數片段：", set(re.findall(r"bool_t\w+|noticeKind\w*|DATE1|SKEY|typek|TYPEK", page)))
-          i = page.find("noticeKind"); print(page[max(0, i-800):i+800] if i >= 0 else "無 noticeKind")
+          op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/t146sb10", headers={"User-Agent": UA}), timeout=30).read()
+          for kind in ("12", "11"):
+              for typek in ("sii", "otc"):
+                  p = {"encodeURIComponent": 1, "step": 1, "firstin": "true", "off": 1, "scope": 2, "typek": typek, "TYPEK": typek,
+                       "selecttype": 0, "noticeDate": 2, "date": 4, "noticeKind": kind, "sort": 1}
+                  try:
+                      h = post("ajax_t146sb10", p)
+                  except Exception as e:
+                      print(kind, typek, "FAIL", e); continue
+                  rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S)
+                  hits = [r for r in rows if re.search(r"現金增資|現增", text(r))]
+                  print(f"\n=== noticeKind {kind} {typek}：{len(h)} chars，{len(rows)} 列，現增 {len(hits)} 列")
+                  for r in hits[:6]: print("   ", text(r)[:220])
+                  if hits:
+                      r = hits[0]
+                      print("  按鈕原始：", re.sub(r"\s+", " ", r)[-900:])
+                      args = dict(re.findall(r"\.(\w+)\.value\s*=\s*'([^']*)'", r))
+                      print("  解析參數：", args)
+                      if args:
+                          try:
+                              d = post("ajax_t146sb10", {**{k: v for k, v in args.items()}, "firstin": "true", "off": 1})
+                              t = text(d); i = t.find("買賣")
+                              print("  內文：", t[:200], " … ", t[max(0, i-300):i+300])
+                          except Exception as e: print("  detail FAIL", e)
+                  time.sleep(2)
           PYEOF
