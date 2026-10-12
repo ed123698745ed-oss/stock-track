@@ -1,0 +1,13 @@
+name: 探測 019
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [probe/**, .github/workflows/probe_019.yml]
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env: {PYTHONUNBUFFERED: '1'}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 probe/p019.py
