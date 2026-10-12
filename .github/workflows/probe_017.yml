@@ -18,50 +18,36 @@ jobs:
           UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
           CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
           op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.HTTPSHandler(context=CTX))
-          def post(path, params):
+          def post(params):
               data = urllib.parse.urlencode(params).encode()
-              return op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/" + path, data=data,
+              return op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/ajax_t146sb10", data=data,
                      headers={"User-Agent": UA, "Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"}), timeout=40).read().decode("utf-8", "replace")
           def text(h): return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h)).strip()
           op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/t146sb10", headers={"User-Agent": UA}), timeout=30).read()
-          base = {"encodeURIComponent": 1, "step": 1, "firstin": 1, "off": 1, "keyword4": "", "code1": "", "TYPEK2": "",
-                  "checkbtn": "", "queryName": "co_id_1", "inpuType": "co_id", "TYPEK": "all", "co_id_1": "",
-                  "selecttype": 0, "noticeKind": 12, "sort": 1}
-          variants = {
-            "A scope2 sii 近1月": {**base, "scope": 2, "typek": "sii", "noticeDate": 2, "date": 4},
-            "B scope2 otc 近1月": {**base, "scope": 2, "typek": "otc", "noticeDate": 2, "date": 4},
-            "C scope2 sii 區間": {**base, "scope": 2, "typek": "sii", "noticeDate": 1, "yymmdd1": "115/09/01", "yymmdd2": "115/10/12"},
-            "D scope2 sii 近3月 kind11": {**base, "scope": 2, "typek": "sii", "noticeDate": 2, "date": 5, "noticeKind": 11},
-            "E scope1 co 2330 近1年": {**base, "scope": 1, "co_id_1": "2330", "co_id": "2330", "noticeDate": 2, "date": 7, "noticeKind": 0},
-          }
-          ok = None
-          for name, p in variants.items():
-              try:
-                  h = post("ajax_t146sb10", p)
-              except Exception as e:
-                  print(name, "FAIL", e); continue
-              rows = [r for r in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S) if "<td" in r]
-              if name.startswith("A"):
-                  print("  表單：", [re.sub(r"\s+", " ", f)[:300] for f in re.findall(r"<form[^>]*>", h)])
-                  print("  欄位：", [re.sub(r"\s+", " ", f)[:200] for f in re.findall(r"<input[^>]*>", h)][:40])
-                  forms = re.findall(r"<form[^>]*name=['\"]?(\w+)['\"]?[^>]*action=['\"]?([^'\" >]+)[^>]*>(.*?)</form>", h, re.S)
-                  for fname, act, body in forms:
-                      fields = dict(re.findall(r"name=['\"]?([\w\-]+)['\"]?[^>]*value\s*=\s*['\"]([^'\"]*)", body))
-                      print(f"  → 送出 {fname} {act} {fields}")
-                      try:
-                          h2 = post(act.split("/")[-1], fields)
-                          rows2 = [r for r in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h2, re.S) if "<td" in r]
-                          print(f"    第二段：{len(h2)} chars，資料列 {len(rows2)}")
-                          for r in rows2[:8]: print("     ", text(r)[:220])
-                          hits = [r for r in rows2 if re.search(r"增資|新股", text(r))]
-                          if hits: print("    現增列原始：", re.sub(r"\s+", " ", hits[0])[-1500:])
-                      except Exception as e: print("    FAIL", e)
-              print(f"\n=== {name}：{len(h)} chars，資料列 {len(rows)}")
-              for r in rows[:5]: print("   ", text(r)[:200])
-              if rows and not ok: ok = rows
-              time.sleep(2)
-          if ok:
-              hits = [r for r in ok if re.search(r"增資|新股", text(r))] or ok
-              r = hits[0]
-              print("\n按鈕原始：", re.sub(r"\s+", " ", r)[-1200:])
+          for kind in ("12", "11"):
+              for typek in ("sii", "otc"):
+                  first = post({"encodeURIComponent": 1, "step": 1, "firstin": 1, "off": 1, "scope": 2, "typek": typek,
+                                "selecttype": 0, "noticeDate": 2, "date": 4, "noticeKind": kind, "sort": 1})
+                  fields = dict(re.findall(r"<input type='hidden' name='(\w+)' value='([^']*)'", first))
+                  rpts = re.findall(r"rpt\.value='(\w+)'", first)
+                  print(f"\n=== kind {kind} {typek}：rpt {rpts}")
+                  for rpt in rpts:
+                      h = post({**fields, "rpt": rpt})
+                      rows = [r for r in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S) if "<td" in r]
+                      hits = [r for r in rows if re.search(r"增資|現增", text(r))]
+                      print(f"  {rpt}：{len(h)} chars，{len(rows)} 列，現增 {len(hits)} 列")
+                      for r in (hits or rows)[:6]: print("    ", text(r)[:220])
+                      if hits:
+                          raw = re.sub(r"\s+", " ", hits[0])
+                          print("  現增列原始：", raw[-1200:])
+                          args = dict(re.findall(r"\.(\w+)\.value\s*=\s*['\"]([^'\"]*)['\"]", hits[0]))
+                          print("  按鈕參數：", args)
+                          if args:
+                              try:
+                                  d = post({**fields, **args})
+                                  t = text(d); i = t.find("買賣")
+                                  print("  內文前段：", t[:300])
+                                  print("  內文『買賣』附近：", t[max(0, i-400):i+300])
+                              except Exception as e: print("  detail FAIL", e)
+                      time.sleep(2)
           PYEOF
