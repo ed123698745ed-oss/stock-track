@@ -15,7 +15,3 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 probe/p6980.py
-      - run: python3 scripts/event_signals.py
-      - run: python3 scripts/insider.py
-      - run: python3 scripts/cash_issue.py
-      - run: python3 scripts/daily_push.py
