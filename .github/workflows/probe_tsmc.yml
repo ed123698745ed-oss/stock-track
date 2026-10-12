@@ -1,0 +1,65 @@
+name: 探測台積電法說日
+
+# 暫時性：推到開發分支時自動跑，確認法說日來源後刪除。
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [.github/workflows/probe_tsmc.yml]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: probe
+        run: |
+          python3 - <<'PYEOF'
+          import json, re, ssl, urllib.request, urllib.parse, http.cookiejar
+          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
+          CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
+          op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+                                           urllib.request.HTTPSHandler(context=CTX))
+          def text(html):
+              t = re.sub(r"<script.*?</script>|<style.*?</style>", " ", html, flags=re.S)
+              return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t))
+          def show(label, html):
+              t = text(html)
+              print(f"\n===== {label}  ({len(html)} chars)")
+              hits = [m.start() for m in re.finditer(r"法人說明會|法說|Earnings Conference|Conference Call|115/|2026", t)]
+              print("  命中次數", len(hits))
+              for h in hits[:8]: print("  …", t[max(0, h-120):h+160])
+          try:
+              op.open(urllib.request.Request("https://mops.twse.com.tw/mops/", headers={"User-Agent": UA}), timeout=10).read()
+          except Exception as e: print("mops home", e)
+          for api, params in [
+              ("ajax_t100sb02_1", {"encodeURIComponent":1,"step":1,"firstin":1,"off":1,"TYPEK":"sii","year":"115","month":"all","co_id":"2330"}),
+              ("ajax_t100sb02_1", {"encodeURIComponent":1,"step":1,"firstin":1,"off":1,"TYPEK":"sii","year":"114","month":"all","co_id":"2330"}),
+              ("ajax_t05st01", {"step":1,"firstin":1,"off":1,"keyword4":"法人說明會","code1":"","TYPEK2":"","checkbtn":"","queryName":"co_id","inpuType":"co_id","TYPEK":"all","co_id":"2330","year":"115","month":"","b_date":"","e_date":""}),
+          ]:
+              try:
+                  body = json.dumps({"apiName": api, "parameters": params}).encode()
+                  req = urllib.request.Request("https://mops.twse.com.tw/mops/api/redirectToOld", data=body,
+                        headers={"Content-Type":"application/json","User-Agent":UA,"Origin":"https://mops.twse.com.tw","Referer":"https://mops.twse.com.tw/mops/"})
+                  r = json.loads(op.open(req, timeout=20).read().decode("utf-8","replace"))
+                  url = (r.get("result") or {}).get("url")
+                  print(f"\n[{api} {params.get('year')}] redirect -> {str(url)[:160]}  raw={str(r)[:200] if not url else ''}")
+                  if url:
+                      html = op.open(urllib.request.Request(url, headers={"User-Agent":UA,"Referer":"https://mops.twse.com.tw/"}), timeout=20).read().decode("utf-8","replace")
+                      show(f"MOPS {api} {params.get('year')}", html)
+              except Exception as e:
+                  print(f"[{api}] FAIL {type(e).__name__}: {str(e)[:200]}")
+          # 舊站直連
+          try:
+              data = urllib.parse.urlencode({"encodeURIComponent":1,"step":1,"firstin":1,"off":1,"TYPEK":"sii","year":"115","month":"all","co_id":"2330"}).encode()
+              html = op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1", data=data, headers={"User-Agent":UA}), timeout=20).read().decode("utf-8","replace")
+              show("mopsov t100sb02_1 115", html)
+          except Exception as e: print("mopsov FAIL", e)
+          # 台積電投資人關係
+          for u in ["https://investor.tsmc.com/chinese/quarterly-results", "https://investor.tsmc.com/english/quarterly-results",
+                    "https://investor.tsmc.com/chinese/events"]:
+              try:
+                  html = op.open(urllib.request.Request(u, headers={"User-Agent":UA}), timeout=20).read().decode("utf-8","replace")
+                  show(u, html)
+              except Exception as e: print(u, "FAIL", type(e).__name__, str(e)[:150])
+          PYEOF
