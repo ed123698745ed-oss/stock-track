@@ -1,23 +1,11 @@
-import json, re, sys
+import json, sys
 sys.path.insert(0, "scripts")
 from cash_issue import _get
-def j(u):
-    try:
-        s = _get(u, hdr={"Accept": "application/json"}); print("==", u, len(s)); return s
-    except Exception as e: print("==", u, "ERR", e); return ""
-s = j("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL")
-try:
-    r = json.loads(s); print(len(r)); print(json.dumps(r[:3], ensure_ascii=False))
-except Exception as e: print(s[:500])
-s = j("https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json")
-print(s[:2500])
-sw = j("https://www.tpex.org.tw/openapi/swagger.json")
-for p in re.findall(r'"(/[^"]*(?:exright|dividend|Exright|xr)[^"]*)"', sw): print("tpex path", p)
-for p in ["tpex_exright_prepost_schedule", "tpex_exright_daily", "tpex_exdividend_schedule"]:
-    s = j("https://www.tpex.org.tw/openapi/v1/" + p); print(s[:1200])
-s = j("https://www.tpex.org.tw/www/zh-tw/bulletin/exDailyQ?response=json")
-print(s[:1500])
-for u in ["https://openapi.twse.com.tw/v1/opendata/t187ap03_L", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"]:
-    s = j(u)
-    try: print(list(json.loads(s)[0].items()))
-    except Exception as e: print(e)
+for u in ["https://www.tpex.org.tw/openapi/v1/tpex_exright_prepost", "https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL"]:
+    r = json.loads(_get(u, hdr={"Accept": "application/json"}))
+    print("==", u, len(r)); print(json.dumps(r[:2], ensure_ascii=False))
+    ks = list(r[0]); print(ks)
+    for x in r:
+        if any(k in x and str(x[k]).strip() not in ("", "0", "0.0", "0.00000000", "0.000000") for k in ks if "Stock" in k or "Subscri" in k or "配股" in k):
+            print("  stock/sub:", json.dumps(x, ensure_ascii=False))
+    print("dates", sorted({x.get("Date") or x.get("ExRightsExDividendDate") or "" for x in r})[:40])
