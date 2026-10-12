@@ -65,9 +65,41 @@ def _text(h):
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h)).strip()
 
 
+DATE = r"(\d{2,3})\s*[/年]\s*(\d{1,2})\s*[/月]\s*(\d{1,2})\s*日?/?"  # 115/09/29、115年9月29日
+
+
 def roc(s):
-    m = re.fullmatch(r"(\d{2,3})/(\d{1,2})/(\d{1,2})", s.strip())
+    m = re.fullmatch(DATE, s.strip())
     return dt.date(int(m.group(1)) + 1911, int(m.group(2)), int(m.group(3))) if m else None
+
+
+_SHARES = {}
+
+
+def issued_shares(code):
+    """已發行普通股數（上市 t187ap03_L、上櫃 mopsfin_t187ap03_O）。欄位名稱自動辨識。"""
+    if not _SHARES:
+        for u in ("https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                  "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"):
+            try:
+                rows = json.loads(_get(u, hdr={"Accept": "application/json"}))
+            except Exception as e:
+                print(f"  公司基本資料抓取失敗 {u}：{e}")
+                continue
+            if not rows:
+                continue
+            keys = list(rows[0])
+            kc = next(k for k in keys if re.search(r"公司代號|SecuritiesCompanyCode|CompanyCode", k))
+            ks = next((k for k in keys if re.search(r"已發行普通股|IssueShares|IssuedShares", k)), None)
+            if not ks:
+                print(f"  {u} 找不到已發行股數欄位：{keys}")
+                continue
+            for r in rows:
+                v = re.sub(r"[^\d]", "", str(r.get(ks) or ""))
+                if v:
+                    _SHARES[str(r[kc]).strip()] = int(v)
+        print(f"  已發行股數資料 {len(_SHARES)} 家")
+    return _SHARES.get(code)
 
 
 def list_announcements(start, end):
@@ -91,21 +123,32 @@ def list_announcements(start, end):
     return out
 
 
-def parse_detail(text):
-    """內文 → {ratio 每仟股認購股數, pay_start, pay_end 原股東繳款期間, base 認股基準日}；
-    延後作業（待訂定）回傳 None。"""
-    if re.search(r"待訂定後另行公告|延後原定|延後.{0,6}作業日程", text):
+D_ = r"(\d{2,3}\s*[/年]\s*\d{1,2}\s*[/月]\s*\d{1,2}\s*日?/?)"
+RANGE = D_ + r"\s*(?:起)?\s*[~～至\-－]\s*" + D_
+
+
+def parse_detail(text, code=None):
+    """內文 → {ratio 每仟股認購股數, ratio_src, pay_start, pay_end 原股東繳款期間, base 認股基準日}。
+    繳款日程延後（待另行訂定）回傳 None；只有「發行價格待訂定」不算延後。"""
+    if re.search(r"原訂.{0,30}待訂定後另行公告|延後原定|延後.{0,6}作業日程|擬予?延後|另行訂定並公告", text):
         return None
-    r = re.search(r"每[仟千]股[^0-9]{0,12}?([\d,]+(?:\.\d+)?)\s*股", text)
-    p = re.search(r"原股東[^0-9]{0,30}?(?:繳款|繳納)[^0-9]{0,12}?"
-                  r"(\d{2,3}/\d{1,2}/\d{1,2})\s*[~～至\-－]\s*(\d{2,3}/\d{1,2}/\d{1,2})", text)
+    p = re.search(r"原股東[^0-9]{0,30}?(?:繳款|繳納)[^0-9]{0,12}?" + RANGE, text)
     if not p:  # 只寫「股款繳納期間」沒有分原股東的格式
-        p = re.search(r"股款繳納期間[^0-9]{0,40}?(\d{2,3}/\d{1,2}/\d{1,2})\s*[~～至\-－]\s*"
-                      r"(\d{2,3}/\d{1,2}/\d{1,2})", text)
-    b = re.search(r"認股基準日\s*[:：]\s*(\d{2,3}/\d{1,2}/\d{1,2})", text)
-    if not (r and p):
+        p = re.search(r"股款繳納期間[^0-9]{0,40}?" + RANGE, text)
+    if not p:
         return None
-    return {"ratio": float(r.group(1).replace(",", "")), "pay_start": roc(p.group(1)),
+    b = re.search(r"認股基準日\s*[:：]\s*" + D_, text)
+    r = re.search(r"每[壹一]?[仟千]股[^0-9]{0,12}?([\d,]+(?:\.\d+)?)\s*股", text)
+    ratio, src = (float(r.group(1).replace(",", "")), "公告") if r else (None, None)
+    if ratio is None and code:  # 公告沒寫每仟股：原股東認購股數 ÷ 已發行股數
+        m = re.search(r"原股東認購比[率例][^計]{0,40}計\s*([\d,]+)\s*(仟)?股", text)
+        sh = issued_shares(code)
+        if m and sh:
+            n = int(m.group(1).replace(",", "")) * (1000 if m.group(2) else 1)
+            ratio, src = n / sh * 1000, "原股東認購股數÷已發行股數"
+    if ratio is None:
+        return None
+    return {"ratio": ratio, "ratio_src": src, "pay_start": roc(p.group(1)),
             "pay_end": roc(p.group(2)), "base": roc(b.group(1)) if b else None}
 
 
@@ -120,7 +163,8 @@ def build004(cal, code, name, info):
     cycle = (info["base"] or info["pay_end"]).isoformat()
     rows = leg("004", "大額現增放空", code, name, cycle, "short", ent, "open", ext, "close", STAT004)
     for x in rows:
-        x["detail"] = (f"每仟股認購 {info['ratio']:.2f} 股（{info['ratio'] / 10:.1f}%）｜"
+        est = "" if info.get("ratio_src") == "公告" else "，依已發行股數換算"
+        x["detail"] = (f"每仟股認購 {info['ratio']:.2f} 股（{info['ratio'] / 10:.1f}%{est}）｜"
                        f"繳款 {info['pay_start']:%m/%d}~{info['pay_end']:%m/%d}｜先確認券源、借券費｜" + x["detail"])
     return rows
 
@@ -142,7 +186,7 @@ def main():
         try:
             txt = _text(mops({"step": 2, "firstin": 1, "off": 1, "seq_no": seq,
                               "spoke_time": tm, "spoke_date": d8, "co_id": co, "TYPEK": typ}))
-            info = parse_detail(txt)
+            info = parse_detail(txt, co)
         except Exception as e:
             print(f"  {co} {name} 內文抓取失敗：{e}")
             continue
@@ -154,7 +198,7 @@ def main():
                 print("     內文：", txt[i:i + 900])
             continue
         ok = info["ratio"] > TH004
-        print(f"  {co} {name} 每仟股 {info['ratio']:.2f} 股 繳款 {info['pay_start']}~{info['pay_end']} "
+        print(f"  {co} {name} 每仟股 {info['ratio']:.2f} 股（{info['ratio_src']}） 繳款 {info['pay_start']}~{info['pay_end']} "
               f"{'→ 004 符合' if ok else '（未達 50 股）'}")
         if ok:
             seen[co] = build004(cal, co, name, info)  # 同一家公司後面的公告覆蓋前面的

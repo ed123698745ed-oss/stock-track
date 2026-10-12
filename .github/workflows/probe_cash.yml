@@ -18,5 +18,5 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           DRY_RUN: '1'
           DAYS: '45'
-          DEBUG: '1'
+
         run: python3 scripts/cash_issue.py
