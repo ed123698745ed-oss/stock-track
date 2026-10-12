@@ -165,6 +165,8 @@ jobs:
                   rec["listing"]     = parse_date(first_str(body, "grantStockDate"))
                   op = first_str(body, "openPrice")
                   rec["price"]       = float(re.sub(r"[^\d.]", "", op)) if op and re.search(r"\d", op) else None
+                  if not rec["price"]:
+                      rec["price"] = None  # 競拍／詢價還沒定價時官方填 0
                   rec["state"]       = first_str(body, "state")
 
                   blocks, raw = [], {}
