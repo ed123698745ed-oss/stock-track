@@ -46,7 +46,7 @@ def strategy_line(r):
     tail = ([f"{pair} {md(r['pair_date'])} {TIMING.get(r.get('pair_timing'))}"]
             if r.get("pair_date") else [])
     if r.get("detail"):
-        tail.append(re.sub(r"承銷價 (0\.0|0|None)(?=\D|$)", "承銷價 未定", r["detail"]))
+        tail.append(re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", r["detail"]))
     if tail:
         lines.append("　" + "｜".join(tail))
     return "\n".join(lines)
@@ -56,7 +56,7 @@ def block_line(r):
     name = f"{r.get('company_name') or ''} {r.get('company_code') or ''}".strip()
     lines = [f"【{r.get('action') or '注意'}】{name}"]
     sub = "｜".join(x for x in (r.get("block"), r.get("detail")) if x)
-    sub = re.sub(r"承銷價 (0\.0|0|None)(?=\D|$)", "承銷價 未定", sub)
+    sub = re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", sub)
     if sub:
         lines.append("　" + sub)
     return "\n".join(lines)
