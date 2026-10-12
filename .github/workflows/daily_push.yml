@@ -51,6 +51,11 @@ jobs:
         continue-on-error: true
         run: python3 scripts/insider.py
 
+      - name: 大幅除權息（A11）
+        id: exright
+        continue-on-error: true
+        run: python3 scripts/exright.py
+
       - name: 日曆型策略（A01、A09、A10、009、021）
         id: cal
         continue-on-error: true
@@ -65,6 +70,7 @@ jobs:
           CAL_OUTCOME: ${{ steps.cal.outcome }}
           CASH_OUTCOME: ${{ steps.cash.outcome }}
           INSIDER_OUTCOME: ${{ steps.insider.outcome }}
+          EXRIGHT_OUTCOME: ${{ steps.exright.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           LATE: ${{ (github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py
