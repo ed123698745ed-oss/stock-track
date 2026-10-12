@@ -97,11 +97,18 @@ def index_prep(cal, today):
     return out
 
 
+def board_key(r):
+    """既有板塊（處置股、庫藏股、IPO…）一筆的識別：用顯示文字的雜湊，推過就記在 intraday_alerts。"""
+    import hashlib
+    return "tmr:" + hashlib.md5(block_line(r).encode()).hexdigest()[:16]
+
+
 def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep=None):
     head_day = md(next_day) if next_day else "下一個交易日"
     if late:
         out = [f"補充提醒｜{head_day} 新增訊號（稍晚公布的資料）"]
         out += [f"⚠ {p}" for p in problems] + [""]
+        out += [block_line(r) for r in (tmr or [])]
         out += [strategy_line(r) for r in stg]
         return "\n".join(out + ["", SITE])
     out = [f"交易提醒｜{head_day} 要做的事"]
@@ -216,11 +223,13 @@ def main():
     if late:
         # 晚間補推：只推第一次推播之後才出現的「明天」策略訊號
         stg = [r for r in (stg or []) if r.get("due_label") == "明天" and not r.get("notified_at")]
-        if not stg:
+        sent, _ = safe(lambda: {x["key"] for x in supa(f"intraday_alerts?select=key&d=eq.{today.isoformat()}&key=like.tmr:*")})
+        tmr = [r for r in (tmr or []) if r.get("due_label") == "明天" and board_key(r) not in (sent or set())] if sent is not None else []
+        if not stg and not tmr:
             print("沒有新增訊號，不補推")
             return
         problems = [p for p in problems if "融資" not in p]
-        text = compose(now, None, stg, None, next_day, problems, late=True)
+        text = compose(now, tmr, stg, None, next_day, problems, late=True)
     else:
         text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
                        prep=index_prep(cal if hol else None, today))
@@ -233,6 +242,10 @@ def main():
         if ids:
             safe(lambda: supa(f"strategy_actions?id=in.({','.join(ids)})", "PATCH",
                               {"notified_at": now.isoformat()}))
+        keys = [{"d": today.isoformat(), "key": board_key(r)} for r in (tmr or []) if r.get("due_label") == "明天"]
+        if keys:
+            safe(lambda: supa("intraday_alerts?on_conflict=d,key", "POST", keys,
+                              prefer="resolution=ignore-duplicates,return=minimal"))
     failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME")
               if os.environ.get(k, "success") != "success"]
     if (tmr is None and stg is None) or failed:
