@@ -1,52 +1,21 @@
 name: 探測現增資料
 
-# 暫時性：確認 004／017 所需的現增繳款日、新股上市日從哪裡抓，確認後刪除。
+# 暫時性：以 DRY_RUN 掃最近 45 天的現增公告，確認 004 解析結果，確認後刪除。
 on:
   push:
     branches: [claude/strategy-trigger-tracking-dccm6s]
-    paths: [.github/workflows/probe_cash.yml]
+    paths: [.github/workflows/probe_cash.yml, scripts/cash_issue.py]
 
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: probe
-        run: |
-          python3 - <<'PYEOF'
-          import json, re, ssl, urllib.request, urllib.parse, http.cookiejar, time
-          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
-          CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
-          op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.HTTPSHandler(context=CTX))
-          def get(url, data=None, hdr=None):
-              h = {"User-Agent": UA}; h.update(hdr or {})
-              return op.open(urllib.request.Request(url, data=data, headers=h), timeout=40).read().decode("utf-8", "replace")
-          def mops(api, params):
-              body = json.dumps({"apiName": api, "parameters": params}).encode()
-              r = json.loads(get("https://mops.twse.com.tw/mops/api/redirectToOld", body, {"Content-Type":"application/json","Origin":"https://mops.twse.com.tw","Referer":"https://mops.twse.com.tw/mops/"}))
-              return get(r["result"]["url"], hdr={"Referer":"https://mops.twse.com.tw/"})
-          def text(h): return re.sub(r"[ \t　]+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h))
-          try: get("https://mops.twse.com.tw/mops/")
-          except Exception: pass
-          rows = []
-          for m, e in (("09", "30"), ("10", "11")):
-              html = mops("ajax_t05st01", {"step":1,"firstin":1,"off":1,"keyword4":"","code1":"","TYPEK2":"","checkbtn":"","queryName":"co_id","inpuType":"co_id","TYPEK":"all","co_id":"","year":"115","month":m,"b_date":"01","e_date":e})
-              for tr in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.S):
-                  oc = re.search(r"seq_no.value='(\d+)'.*?spoke_time.value='(\d+)'.*?spoke_date.value='(\d+)'.*?co_id.value='(\w+)'.*?TYPEK.value='(\w+)'", tr)
-                  subj = re.sub(r"\s+", " ", text(tr)).strip()
-                  if oc: rows.append((subj, oc.groups()))
-              time.sleep(2)
-          print("總筆數", len(rows))
-          base = [r for r in rows if re.search(r"認股基準日|繳款期間", r[0]) and "初次" not in r[0]]
-          lst = [r for r in rows if re.search(r"新股.{0,12}(上市|上櫃|掛牌|買賣)|上市買賣|開始買賣", r[0]) and "初次" not in r[0]]
-          print("認股基準日／繳款類", len(base)); [print("  ", s[:160]) for s, _ in base[:12]]
-          print("新股上市類", len(lst)); [print("  ", s[:160]) for s, _ in lst[:15]]
-          for s, (seq, tm, dt, co, typ) in base[:3] + lst[:2]:
-              try:
-                  h = mops("ajax_t05st01", {"step":2,"firstin":1,"off":1,"seq_no":seq,"spoke_time":tm,"spoke_date":dt,"co_id":co,"TYPEK":typ})
-                  t = re.sub(r"\s+", " ", text(h))
-                  i = t.find("說明")
-                  print(f"\n=== 內文 {co} {dt} ({len(h)} chars)：{s[:60]}\n", t[max(0,i-50):i+1500])
-              except Exception as ex: print("detail FAIL", co, ex)
-              time.sleep(2)
-          PYEOF
+      - uses: actions/checkout@v4
+      - name: 004 DRY_RUN
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DRY_RUN: '1'
+          DAYS: '45'
+        run: python3 scripts/cash_issue.py
