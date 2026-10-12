@@ -1,0 +1,45 @@
+name: 新增休市日
+
+# 颱風假等臨時休市：推播出現「平日但沒有行情」的提示，確認是休市後手動跑這個登錄。
+# 登錄後會重算既有訊號的進出場日（同「更新休市日」）。
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '休市日期（例 2026-07-10）'
+        required: true
+      name:
+        description: '原因（例 颱風停止上班上課）'
+        required: false
+        default: '臨時休市'
+
+permissions:
+  contents: read
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      D: ${{ github.event.inputs.date }}
+      N: ${{ github.event.inputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 - <<'PYEOF'
+          import datetime as dt, os, sys
+          sys.path.insert(0, "scripts")
+          from calendar_signals import supa
+          d = dt.date.fromisoformat(os.environ["D"].strip())
+          if d.weekday() >= 5:
+              raise SystemExit(f"{d} 是週末，不用登錄")
+          if supa(f"market_days?select=d&d=eq.{d.isoformat()}"):
+              raise SystemExit(f"{d} 有行情資料，不是休市日，不登錄")
+          supa("holidays", "POST", [{"market_date": d.isoformat(), "name": os.environ["N"][:100]}],
+               prefer="resolution=merge-duplicates,return=minimal")
+          print(f"已登錄休市日 {d} {os.environ['N']}")
+          n = supa("rpc/recalc_signal_dates", "POST", {})
+          print(f"重算後有 {n} 筆訊號的進出場日被修正")
+          PYEOF
