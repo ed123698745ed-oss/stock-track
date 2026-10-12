@@ -536,7 +536,7 @@ function renderIpos(rows) {
       <span class="tag" style="color:var(--dim)">${esc(r.market || "")}</span>
       ${r.underwriter ? `<span class="tag" style="color:var(--dim)">${esc(r.underwriter)}</span>` : ""}
       <div class="name">${esc(r.company_name || "")} <span class="code">${esc(r.company_code)}</span></div>
-      <div class="meta">承銷價 <b>${r.offer_price ?? "—"}</b>
+      <div class="meta">承銷價 <b>${Number(r.offer_price) > 0 ? r.offer_price : "未定"}</b>
         ・掛牌 <b>${fmt(r.listing_date)}</b>
         ${r.next_focus ? `・下個觀察 <b>${esc(r.next_focus)}</b>` : ""}</div>
       <div class="nodes">

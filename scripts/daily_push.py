@@ -10,6 +10,7 @@
 環境變數：SUPABASE_URL、SUPABASE_SERVICE_KEY、LINE_CHANNEL_ACCESS_TOKEN、LINE_USER_ID
          DRY_RUN=1 只印不推；CAL_OUTCOME=日曆策略那一步的結果（success/failure）
 """
+import re
 import datetime as dt
 import json
 import os
@@ -45,7 +46,7 @@ def strategy_line(r):
     tail = ([f"{pair} {md(r['pair_date'])} {TIMING.get(r.get('pair_timing'))}"]
             if r.get("pair_date") else [])
     if r.get("detail"):
-        tail.append(r["detail"])
+        tail.append(re.sub(r"承銷價 (0\.0|0|None)(?=\D|$)", "承銷價 未定", r["detail"]))
     if tail:
         lines.append("　" + "｜".join(tail))
     return "\n".join(lines)
@@ -55,6 +56,7 @@ def block_line(r):
     name = f"{r.get('company_name') or ''} {r.get('company_code') or ''}".strip()
     lines = [f"【{r.get('action') or '注意'}】{name}"]
     sub = "｜".join(x for x in (r.get("block"), r.get("detail")) if x)
+    sub = re.sub(r"承銷價 (0\.0|0|None)(?=\D|$)", "承銷價 未定", sub)
     if sub:
         lines.append("　" + sub)
     return "\n".join(lines)
