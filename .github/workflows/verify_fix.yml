@@ -2,7 +2,7 @@ name: 驗證修正（只讀）
 on:
   push:
     branches: [claude/strategy-trigger-tracking-dccm6s]
-    paths: [.github/workflows/verify_fix.yml]
+    paths: [.github/workflows/verify_fix.yml, probe/**]
 jobs:
   v:
     runs-on: ubuntu-latest
@@ -14,6 +14,7 @@ jobs:
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
     steps:
       - uses: actions/checkout@v4
+      - run: python3 probe/p6980.py
       - run: python3 scripts/event_signals.py
       - run: python3 scripts/insider.py
       - run: python3 scripts/cash_issue.py
