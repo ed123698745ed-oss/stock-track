@@ -1,0 +1,55 @@
+name: 探測現增資料
+
+# 暫時性：確認 004／017 所需的現增繳款日、新股上市日從哪裡抓，確認後刪除。
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [.github/workflows/probe_cash.yml]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: probe
+        run: |
+          python3 - <<'PYEOF'
+          import json, re, ssl, urllib.request, urllib.parse, http.cookiejar, time
+          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
+          CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
+          op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()), urllib.request.HTTPSHandler(context=CTX))
+          def get(url, data=None, hdr=None):
+              h = {"User-Agent": UA, "Accept": "application/json, text/html, */*"}; h.update(hdr or {})
+              return op.open(urllib.request.Request(url, data=data, headers=h), timeout=30).read().decode("utf-8-sig", "replace")
+          KW = re.compile(r"現金增資|現增|繳款|新股上市|上櫃買賣|掛牌")
+          # 1) OpenAPI 當日重大訊息（含說明全文）
+          for u in ["https://openapi.twse.com.tw/v1/opendata/t187ap04_L", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O"]:
+              try:
+                  j = json.loads(get(u)); print(f"\n===== {u} 筆數 {len(j)}  欄位 {list(j[0].keys()) if j else None}")
+                  hit = [x for x in j if KW.search(json.dumps(x, ensure_ascii=False))]
+                  print("  含現增關鍵字", len(hit))
+                  for x in hit[:3]: print("   ", json.dumps(x, ensure_ascii=False)[:900])
+              except Exception as e: print(u, "FAIL", e)
+          # 2) MOPS 重大訊息查詢（近兩個月，全市場），看主旨
+          try: get("https://mops.twse.com.tw/mops/")
+          except Exception: pass
+          subs = []
+          for m in ("09", "10"):
+              params = {"step":1,"firstin":1,"off":1,"keyword4":"","code1":"","TYPEK2":"","checkbtn":"","queryName":"co_id","inpuType":"co_id","TYPEK":"all","co_id":"","year":"115","month":m,"b_date":"01","e_date":"31" if m=="09" else "11"}
+              try:
+                  body = json.dumps({"apiName":"ajax_t05st01","parameters":params}).encode()
+                  r = json.loads(get("https://mops.twse.com.tw/mops/api/redirectToOld", body, {"Content-Type":"application/json","Origin":"https://mops.twse.com.tw","Referer":"https://mops.twse.com.tw/mops/"}))
+                  html = get(r["result"]["url"], hdr={"Referer":"https://mops.twse.com.tw/"})
+                  for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.S):
+                      t = re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", row)).strip()
+                      if re.search(r"繳款|新股.*(上市|上櫃|掛牌)|現金增資.*(基準日|發行)", t): subs.append((t[:200], row))
+                  print(f"\nMOPS 115/{m} 列表 {len(html)} chars")
+              except Exception as e: print("MOPS list FAIL", m, e)
+              time.sleep(2)
+          print(f"\n現增相關主旨 {len(subs)} 筆，前 25 筆：")
+          for t, _ in subs[:25]: print("  ", t)
+          # 3) 看第一筆的 onclick／隱藏欄位，找內文的取法
+          if subs:
+              raw = subs[0][1]
+              print("\n第一筆原始 HTML：", re.sub(r"\s+", " ", raw)[:1500])
+          PYEOF
