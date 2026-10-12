@@ -24,8 +24,13 @@ jobs:
                      headers={"User-Agent": UA, "Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"}), timeout=40).read().decode("utf-8", "replace")
           def text(h): return re.sub(r"\s+", " ", re.sub(r"<[^>]+>|&nbsp;", " ", h)).strip()
           op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/t146sb10", headers={"User-Agent": UA}), timeout=30).read()
-          for kind in ("12", "11"):
-              for typek in ("sii", "otc"):
+          # doAction() 的內容：決定送出前補上哪些欄位
+          pg = op.open(urllib.request.Request("https://mopsov.twse.com.tw/mops/web/t146sb10", headers={"User-Agent": UA}), timeout=30).read().decode("utf-8","replace")
+          i = pg.find("function doAction"); print("doAction：", re.sub(r"\s+", " ", pg[i:i+1500]))
+          i = pg.find("function chkSelect"); print("chkSelect：", re.sub(r"\s+", " ", pg[i:i+800]))
+          i = pg.find('name="noticeKind"'); print("noticeKind 選項：", re.sub(r"\s+", " ", text(pg[i:i+2500]))[:900])
+          for kind in ("12",):
+              for typek in ("sii",):
                   p = {"encodeURIComponent": 1, "step": 1, "firstin": "true", "off": 1, "scope": 2, "typek": typek, "TYPEK": typek,
                        "selecttype": 0, "noticeDate": 2, "date": 4, "noticeKind": kind, "sort": 1}
                   try:
@@ -35,6 +40,7 @@ jobs:
                   rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S)
                   hits = [r for r in rows if re.search(r"現金增資|現增", text(r))]
                   print(f"\n=== noticeKind {kind} {typek}：{len(h)} chars，{len(rows)} 列，現增 {len(hits)} 列")
+                  print("   回應文字：", text(h)[:700])
                   for r in hits[:6]: print("   ", text(r)[:220])
                   if hits:
                       r = hits[0]
