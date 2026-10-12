@@ -146,6 +146,8 @@ def parse_detail(text, code=None):
     b = re.search(r"認股基準日\s*[:：]\s*" + D_, text)
     r = re.search(r"每[壹一]?[仟千]股[^0-9]{0,12}?([\d,]+(?:\.\d+)?)\s*股", text)
     ratio, src = (float(r.group(1).replace(",", "")), "公告") if r else (None, None)
+    if ratio is not None and ratio > 3000:  # 每仟股認購超過 3000 股不合理：多半抓到總股數，改用換算
+        ratio, src = None, None
     if ratio is None and code:  # 公告沒寫每仟股：原股東認購股數 ÷ 已發行股數
         m = re.search(r"原股東認購比[率例][^計]{0,40}計\s*([\d,]+)\s*(仟)?股", text)
         sh = issued_shares(code)

@@ -66,10 +66,10 @@ def c014(days, cal):
         n = (r.get("ld_twse") or 0) + r["ld_tpex"]
         if n < C014_TH:
             continue
+        if last is not None and i - last < C014_GAP:
+            continue
+        last = i
         t = _d(r["d"])
-        if last is not None and len(cal.days(last, t)) - 1 < C014_GAP:
-            continue  # 用交易日曆算距離，不用資料列數（缺行情日會壓縮距離）
-        last = t
         for hold in (5, 15):
             st = STAT[f"014_{hold}"]
             rs = leg("014", f"持有{hold}日", "TAIEX", "加權指數", t.isoformat(), "long",
@@ -82,12 +82,10 @@ def c014(days, cal):
 
 # ---------------- 010 ----------------
 def streaks(days, cal=None):
-    """每檔股票截至每一天的連續收漲停天數。缺資料（停牌）、漲停未知、或兩筆行情之間缺了交易日 → 中斷。"""
-    out, cur, prev = [], {}, None
+    """每檔股票截至每一天的連續收漲停天數。缺資料（停牌）或漲停未知 → 中斷。
+    以 market_days 的列當交易日序列（休市日表沒有颱風假、舊年度，不能拿來判斷缺日）。"""
+    out, cur = [], {}
     for r in days:
-        if cal and prev and cal.shift(prev, 1) != _d(r["d"]):
-            cur = {}  # 中間有交易日沒抓到行情：不能當連續
-        prev = _d(r["d"])
         nxt = {}
         for code, s in r["stocks"].items():
             nxt[code] = cur.get(code, 0) + 1 if s.get("lu") else 0
@@ -101,8 +99,6 @@ def c010(days, cal):
     st = streaks(days, cal)
     for i in range(1, len(days)):
         t = _d(days[i]["d"])
-        if cal.shift(_d(days[i - 1]["d"]), 1) != t:
-            continue  # 前一個交易日沒有行情，無法確認是「接續」的開板
         for code, s in days[i]["stocks"].items():
             prev = st[i - 1].get(code, 0)
             if prev >= C010_STREAK and s.get("lu") is False:  # 漲停未知（None）不算開板
@@ -147,13 +143,7 @@ def c020(days, cal, today=None):
     lastsig = {}   # 代號 → 上次被採計訊號時的有效日序號
     prevhit = {}   # 代號 → 前一有效日是否達門檻
     cluster_idx, rows, notes = [], [], []
-    prev_d = None
     for i, r in enumerate(days):
-        t_i = _d(r["d"])
-        gap = prev_d is not None and cal.shift(prev_d, 1) != t_i
-        if gap:
-            notes.append(f"{prev_d}~{t_i} 之間有交易日沒有行情資料：當天不做融資鏈接調整（請補抓）")
-        prev_d = t_i
         if not r.get("has_margin"):
             notes.append(f"{r['d']} 融資資料不完整，020 當天不判斷")
             continue
@@ -165,7 +155,7 @@ def c020(days, cal, today=None):
             h = hist.setdefault(code, [])
             # 鏈接：每個有融資資料的日子都比對，避免非有效日的餘額變動被誤當成減資／分割
             mp = s.get("mp")
-            if h and not gap and mp is not None and lastraw.get(code) and mp != lastraw[code]:
+            if h and mp is not None and lastraw.get(code) and mp != lastraw[code]:
                 f = mp / lastraw[code]
                 h[:] = [x * f for x in h]
             lastraw[code] = mb
@@ -195,8 +185,8 @@ def c020(days, cal, today=None):
             continue
         if len(sigs) < base * M["cluster"]:
             continue
-        second = any(len(cal.days(j, t_i)) - 1 <= M["window"] for j in cluster_idx)
-        cluster_idx.append(t_i)
+        second = any(i - j <= M["window"] for j in cluster_idx)
+        cluster_idx.append(i)
         notes.append(f"群聚日 {r['d']}：訊號 {len(sigs)} 檔／分母 {base} 檔 = {len(sigs) / base:.2%}"
                      f"{'　← 二次群聚日' if second else ''}")
         if not second:
