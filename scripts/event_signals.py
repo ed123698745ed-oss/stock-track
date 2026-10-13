@@ -213,8 +213,13 @@ def main():
     hol = [D.fromisoformat(r["market_date"]) for r in supa("holidays?select=market_date&limit=5000")]
     cal = Cal(hol)
     today = dt.datetime.now(TPE).date()
-    days = supa("market_days?select=d,taiex,taiex_pct,ld_twse,ld_tpex,has_otc,has_margin,stocks"
-                "&order=d.desc&limit=330")
+    days = []
+    for off in range(0, 330, 30):  # 分批讀，避免單一查詢太大觸發資料庫 statement timeout
+        part = supa("market_days?select=d,taiex,taiex_pct,ld_twse,ld_tpex,has_otc,has_margin,stocks"
+                    f"&order=d.desc&limit=30&offset={off}")
+        days += part or []
+        if not part or len(part) < 30:
+            break
     if not days:
         print("market_days 沒有資料，先跑 scripts/market.py")
         return
