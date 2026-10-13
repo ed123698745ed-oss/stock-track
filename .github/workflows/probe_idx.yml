@@ -1,0 +1,13 @@
+name: 探測指數名單
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [probe/**, .github/workflows/probe_idx.yml]
+jobs:
+  p:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env: {PYTHONUNBUFFERED: '1'}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 probe/pidx.py
