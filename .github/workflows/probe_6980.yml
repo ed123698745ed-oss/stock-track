@@ -6,7 +6,7 @@ on:
 jobs:
   p:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 8
     env: {PYTHONUNBUFFERED: '1'}
     steps:
       - uses: actions/checkout@v4
