@@ -10,4 +10,5 @@ jobs:
     env: {PYTHONUNBUFFERED: '1'}
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get install -y -qq poppler-utils >/dev/null
       - run: python3 probe/pidx.py
