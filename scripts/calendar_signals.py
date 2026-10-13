@@ -287,7 +287,7 @@ def supa(path, method="GET", payload=None, prefer="return=minimal"):
                 return json.loads(body) if body.strip() else None
         except urllib.error.HTTPError as e:
             last = f"{e.code}: {e.read()[:300]!r}"
-            if e.code not in (502, 503, 504):
+            if e.code not in (500, 502, 503, 504):  # 500 含 statement timeout，重試
                 break
         except Exception as e:  # 網路抖動
             last = f"{type(e).__name__}: {e}"

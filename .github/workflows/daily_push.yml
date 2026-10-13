@@ -32,37 +32,56 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # GitHub 自帶排程有時延遲好幾小時（曾在隔天清晨 05:41 才跑）。
+      # 排程觸發時只在台北 19:00~23:59 執行，太晚就整個略過；cron-job.org 手動觸發不受限。
+      - name: 時間檢查
+        id: gate
+        run: |
+          h=$(TZ=Asia/Taipei date +%H)
+          if [ "${{ github.event_name }}" = "schedule" ] && { [ "$h" -lt 19 ] || [ "$h" -gt 23 ]; }; then
+            echo "排程延遲到台北 ${h} 點才執行，略過"; echo "go=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=1" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 抓今日行情（上市＋上櫃收盤、漲跌停、融資）
+        if: steps.gate.outputs.go == '1'
         id: market
         continue-on-error: true
         run: python3 scripts/market.py
 
       - name: 事件型策略（A08、014、010、020）
+        if: steps.gate.outputs.go == '1'
         id: event
         continue-on-error: true
         run: python3 scripts/event_signals.py
 
       - name: 現增策略（004、017）
+        if: steps.gate.outputs.go == '1'
         id: cash
         continue-on-error: true
         run: python3 scripts/cash_issue.py
 
       - name: 內部人申報轉讓（019）
+        if: steps.gate.outputs.go == '1'
         id: insider
         continue-on-error: true
         run: python3 scripts/insider.py
 
       - name: 大幅除權息（A11）
+        if: steps.gate.outputs.go == '1'
         id: exright
         continue-on-error: true
         run: python3 scripts/exright.py
 
       - name: 日曆型策略（A01、A09、A10、009、021）
+        if: steps.gate.outputs.go == '1'
         id: cal
         continue-on-error: true
         run: python3 scripts/calendar_signals.py
 
       - name: 推播 LINE
+        if: steps.gate.outputs.go == '1'
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
