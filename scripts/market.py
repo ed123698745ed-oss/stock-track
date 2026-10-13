@@ -197,7 +197,7 @@ def fetch_day(d):
         print(f"  {d} 上市融資抓取失敗：{e}")
     for s in stocks.values():
         s["m"] = "L"
-    n_twse_ld = sum(s["ld"] for s in stocks.values())
+    n_twse_ld = sum(1 for s in stocks.values() if s["ld"])  # ld 可能是 None（未知）
 
     # 上櫃：任何一步失敗都只標記，不讓上市資料一起作廢
     ymd2 = d.strftime("%Y/%m/%d")
@@ -219,7 +219,7 @@ def fetch_day(d):
         otc_margin_ok = bool(om)
     except Exception as e:
         print(f"  {d} 上櫃抓取失敗：{e}")
-    n_otc_ld = sum(s["ld"] for s in stocks.values() if s["m"] == "O")
+    n_otc_ld = sum(1 for s in stocks.values() if s["m"] == "O" and s["ld"])
 
     return {
         "d": d.isoformat(), "taiex": taiex, "taiex_pct": pct,
