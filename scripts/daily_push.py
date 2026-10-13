@@ -200,6 +200,27 @@ def unregistered_closures(cal, today):
             f"確認休市請到 Actions →「新增休市日」登錄；漏抓請跑「回補歷史行情」"]
 
 
+def index_review_notice(today):
+    """證交所新聞出現「MSCI 指數臺股權重調整結果」（近 3 天）→ 提醒去填 A04 名單。
+    MSCI 官網擋程式、證交所 PDF 只有權重沒有名單，所以名單仍需手動輸入。"""
+    try:
+        j = json.loads(urllib.request.urlopen(urllib.request.Request(
+            "https://www.twse.com.tw/rwd/zh/news/newsList?response=json",
+            headers={"User-Agent": "Mozilla/5.0"}), timeout=20).read())
+    except Exception:
+        return []
+    out = []
+    for r in j.get("data") or []:
+        title, d = r[1], r[2]
+        m = re.match(r"(\d+)年(\d+)月(\d+)日", d)
+        if not m or not re.search(r"MSCI.*調整結果", title):
+            continue
+        day = dt.date(int(m.group(1)) + 1911, int(m.group(2)), int(m.group(3)))
+        if 0 <= (today - day).days <= 3:
+            out.append(f"📣 {title}（{day:%m/%d} 公布）：請到網站「指數調整」填入 MSCI 新增／刪除名單（A04）")
+    return out
+
+
 def market_problems(today, cal):
     """行情資料狀態 → 警告文字。沒抓到和沒訊號要分得出來。"""
     out = []
@@ -214,6 +235,7 @@ def market_problems(today, cal):
         out.append("除權息預告表抓取失敗，A11 今天可能漏掉 T-5 進場的訊號")
     if cal:
         out += unregistered_closures(cal, today)
+    out += index_review_notice(today)
     st = read_out("market_status.json")
     if cal and cal.is_trading(today):
         if not st or st.get("d") != today.isoformat():
