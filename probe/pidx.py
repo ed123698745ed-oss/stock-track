@@ -1,17 +1,18 @@
-import re, sys, json
+import re, sys, json, subprocess
 sys.path.insert(0, "scripts")
-from cash_issue import _get, _text
-i1, i2 = "8a8216d69fc76da0019ffa56a0a00105", "8a8216d69fc76da0019ffa56f32b0107"
-for u in [f"https://www.twse.com.tw/rwd/zh/news/newsDetail?id={i1}&response=json",
-          f"https://www.twse.com.tw/rwd/zh/news/newsDetail?id={i2}&response=json",
-          f"https://www.twse.com.tw/rwd/zh/news/content?id={i1}&response=json",
-          f"https://www.twse.com.tw/zh/about/news/news/content.html?{i1}",
-          f"https://www.twse.com.tw/zh/news/newsDetail?id={i1}"]:
-    try:
-        s = _get(u); print("==", u, len(s)); print(_text(s)[:2500])
-    except Exception as e: print("==", u, "ERR", e)
+from cash_issue import _get, _op
+import urllib.request
+def raw(u):
+    with _op.open(urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"}), timeout=40) as r:
+        return r.read()
+pdf = raw("https://www.twse.com.tw/news/news/tsecnews/8a8216d69fc76da0019ffa56a07f0104.pdf")
+open("/tmp/m.pdf", "wb").write(pdf); print("pdf bytes", len(pdf))
+print(subprocess.run(["pdftotext", "-layout", "/tmp/m.pdf", "-"], capture_output=True, text=True).stdout[:4000])
 s = _get("https://www.taiwanindex.com.tw/news")
-t = _text(s)
-for m in re.finditer(r"臺灣50|台灣50|成分股", t):
-    print("TI ...", t[max(0, m.start()-150):m.end()+150]); 
-links = sorted(set(re.findall(r'href="([^"]+)"', s))); print([l for l in links if "news" in l][:40])
+print(sorted(set(re.findall(r'["\'](https?://[^"\']*api[^"\']*|/api/[^"\']+)["\']', s)))[:30])
+for js in sorted(set(re.findall(r'src="([^"]+\.js)"', s)))[:8]:
+    u = js if js.startswith("http") else "https://www.taiwanindex.com.tw" + js
+    try:
+        t = _get(u)
+        print(js, sorted(set(re.findall(r'["`\'](/api/[^"`\']+|https://[^"`\']*api[^"`\']*)["`\']', t)))[:20])
+    except Exception as e: print(js, e)
