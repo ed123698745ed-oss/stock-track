@@ -7,7 +7,8 @@ def raw(u):
         return r.read()
 pdf = raw("https://www.twse.com.tw/news/news/tsecnews/8a8216d69fc76da0019ffa56a07f0104.pdf")
 open("/tmp/m.pdf", "wb").write(pdf); print("pdf bytes", len(pdf))
-print(subprocess.run(["pdftotext", "-layout", "/tmp/m.pdf", "-"], capture_output=True, text=True).stdout[:4000])
+from pypdf import PdfReader
+print("\n".join(pg.extract_text() for pg in PdfReader("/tmp/m.pdf").pages)[:4000])
 s = _get("https://www.taiwanindex.com.tw/news")
 print(sorted(set(re.findall(r'["\'](https?://[^"\']*api[^"\']*|/api/[^"\']+)["\']', s)))[:30])
 for js in sorted(set(re.findall(r'src="([^"]+\.js)"', s)))[:8]:
