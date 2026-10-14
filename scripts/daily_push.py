@@ -97,6 +97,42 @@ def index_prep(cal, today):
     return out
 
 
+def log_push(mode, text, status, today, items):
+    """推播紀錄：整則訊息＋每個項目一筆。寫入失敗只印警告，不影響推播。"""
+    try:
+        m = supa("push_messages", "POST", {"mode": mode, "status": status, "text": text},
+                 prefer="return=representation")
+        mid = m[0]["id"] if m else None
+        rows = [dict(r, message_id=mid, push_date=today.isoformat(), mode=mode) for r in items]
+        if rows:
+            supa("push_log", "POST", rows)
+        print(f"推播紀錄已寫入 {len(rows)} 項")
+    except Exception as e:
+        print(f"⚠ 推播紀錄寫入失敗（sql/004 是否已執行？）：{e}")
+
+
+def log_items(text, tmr, stg, watch, next_day):
+    out = []
+    for r in stg or []:
+        ln = strategy_line(r)
+        if r.get("due_label") == "明天" and ln in text:
+            out.append({"source": r["strategy_id"], "code": r.get("company_code"), "name": r.get("company_name"),
+                        "action": r.get("action"), "act_date": r.get("act_date"),
+                        "act_timing": r.get("act_timing"), "line": ln})
+    for r in tmr or []:
+        ln = block_line(r)
+        if r.get("due_label") == "明天" and ln in text:
+            out.append({"source": (r.get("block") or "板塊").split("｜")[0], "code": r.get("company_code"),
+                        "name": r.get("company_name"), "action": r.get("action"),
+                        "act_date": next_day.isoformat() if next_day else None, "line": ln})
+    for w in watch or []:
+        if f"{w['name']} {w['code']}" in text:
+            out.append({"source": "010盯盤", "code": w["code"], "name": w["name"], "action": "盯盤",
+                        "act_date": next_day.isoformat() if next_day else None,
+                        "line": f"已連 {w['streak']} 根漲停"})
+    return out
+
+
 def warn_key(p):
     import hashlib
     return "warn:" + hashlib.md5(p.encode()).hexdigest()[:16]
@@ -295,7 +331,10 @@ def main():
     if os.environ.get("DRY_RUN") == "1":
         print("\nDRY_RUN：不推送")
     else:
-        print("\nLINE 回應", push_line(text))
+        status = push_line(text)
+        print("\nLINE 回應", status)
+        log_push("late" if late else "main", text, status, today,
+                 log_items(text, tmr, stg, None if late else read_out("watch010.json"), next_day))
         ids = [str(r["id"]) for r in (stg or []) if r.get("due_label") == "明天" and r.get("id")
                and strategy_line(r) in text]  # 被截斷沒送出的不標記，補推會再送
         if ids:

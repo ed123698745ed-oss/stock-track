@@ -164,8 +164,14 @@ def main():
     if dry:
         print("\nDRY_RUN：不推送")
     else:
-        print("LINE 回應", push_line(text))
+        status = push_line(text)
+        print("LINE 回應", status)
         mark_sent(today)
+        from daily_push import log_push
+        log_push("intraday", text, status, today,
+                 [{"source": k.split(":")[0], "code": (k.split(":") + [None])[1], "action": "盤中提醒",
+                   "act_date": today.isoformat(), "act_timing": "close", "line": a}
+                  for k, a in zip(_PENDING, alerts)])
 
 
 if __name__ == "__main__":
