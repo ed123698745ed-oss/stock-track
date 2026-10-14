@@ -1,0 +1,26 @@
+name: 匯出推播紀錄
+
+# 每週彙整任務會觸發這個，讀 log 後寫進 Drive 的 05_Emit工作紀錄。
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '往回幾天'
+        required: false
+        default: '7'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONUNBUFFERED: '1'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      DAYS: ${{ github.event.inputs.days }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/export_push_log.py
