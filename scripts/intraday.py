@@ -18,6 +18,7 @@ import time
 import urllib.request
 
 from calendar_signals import Cal, supa
+import perf
 from daily_push import push_line
 from event_signals import C014_GAP, watch010
 
@@ -116,7 +117,8 @@ def main():
 
     # A08
     if pct is not None and pct <= A08_WARN and (dry or once(today, "A08")):
-        alerts.append(f"【A08 大盤-5%】加權目前 {pct:+.2f}%\n　收盤 ≤ −5% → 收盤買進（加權指數），持有 5 個交易日後收盤賣出")
+        alerts.append(f"【A08 大盤-5%】加權目前 {pct:+.2f}%\n　收盤 ≤ −5% → 收盤買進（加權指數），持有 5 個交易日後收盤賣出\n"
+                      f"　{perf.summary('A08') or '績效：總表未提供'}")
 
     # 014：每次都掃全市場跌停家數（正式策略沒有大盤跌幅條件）
     if True:
@@ -132,7 +134,9 @@ def main():
             prev = dt.date.fromisoformat(recent[0]["act_date"])
             in_window = len(cal.days(prev, today)) - 1 < C014_GAP
         if n >= WARN_014 and not in_window and (dry or once(today, "014")):
-            alerts.append(f"【014 跌停群聚】盤中跌停 {n} 家\n　收盤 ≥ 100 家 → 收盤買進（加權指數），持有 5 日／15 日")
+            alerts.append(f"【014 跌停群聚】盤中跌停 {n} 家\n　收盤 ≥ 100 家 → 收盤買進（加權指數），持有 5 日／15 日\n"
+                          f"　5日：{perf.summary('014', '持有5日') or '未提供'}\n"
+                          f"　15日：{perf.summary('014', '持有15日') or '未提供'}")
 
     # 010：昨天已連 ≥ 4 根漲停的股票
     days = supa("market_days?select=d,stocks&order=d.desc&limit=12")
@@ -155,7 +159,8 @@ def main():
                 u = f(x.get("u"))
                 alerts.append(f"【010 開板放空】{w['name']} {w['code']}（已連 {w['streak']} 根漲停）\n"
                               f"　{now_txt}、漲停 {u if u is None else format(u, 'g')}，未鎖漲停\n"
-                              f"　收盤仍沒漲停 → 收盤放空，下一交易日收盤回補（先確認券源）")
+                              f"　收盤仍沒漲停 → 收盤放空，下一交易日收盤回補（先確認券源）\n"
+                              f"　{perf.summary('010') or '績效：總表未提供'}")
 
     if not alerts:
         print("沒有需要提醒的事"); return

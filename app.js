@@ -347,12 +347,15 @@ async function load() {
   const qd = new URLSearchParams(location.search).get("d");
   const target = /^\d{4}-\d{2}-\d{2}$/.test(qd || "") ? qd : auto;
   // 策略訊號另外讀：sql/001 還沒執行時不要拖垮整頁
-  const [sDay, sPlan] = await Promise.all([
+  const [sDay, sPlan, wl] = await Promise.all([
     sb.from("strategy_actions").select("*").eq("ignored", false)
       .gte("act_date", addDays(target, -14)).lte("act_date", target).order("act_date"),
     sb.from("strategy_actions").select("*").eq("ignored", false).gt("act_date", target)
       .lte("act_date", addDays(target, 60)).order("act_date"),
+    // 010 盯盤名單：主推播送出時寫進推播紀錄（sql/004），網站直接讀
+    sb.from("push_log").select("code,name,line,act_date").eq("source", "010盯盤").eq("act_date", target),
   ]);
+  WATCH = wl.error ? null : wl.data || [];
   renderStatus(run.data?.[0]);
   renderTrade(target, auto, tmr.data || [], sDay.data || [], sDay.error,
     !!hol.error || !(hol.data || []).length);  // 讀不到或空表都要講，不能當成沒有休市日
@@ -387,8 +390,19 @@ function renderStatus(r) {
 }
 
 // ---------- 交易提醒（目標交易日）----------
-let FILTER = "all";
-const KIND = { entry: "進場", exit: "出場" };
+let FILTER = "all", WATCH = [];
+const KIND = { entry: "進場", exit: "出場", watch: "觀察" };
+
+function watchCard(w) {
+  return `
+    <div class="card blkline" style="--c:var(--warn)">
+      <span class="tag warn">觀察・盤中</span>
+      <span class="tag blk" style="--c:${BLOCKS.strategy.color}">010 連續漲停開板反轉</span>
+      <div class="name">${esc(w.name || "")} <span class="code">${esc(w.code)}</span></div>
+      <div class="meta">${esc(w.line || "")}｜條件未成立：收盤沒鎖漲停才成立 → 收盤放空、下一交易日收盤回補（13:05 盤中會再提醒）</div>
+      ${m4(perfOf("010"))}
+    </div>`;
+}
 
 function stgCard(r) {
   const s = perfOf(r.strategy_id, r.variant);
@@ -439,6 +453,7 @@ function renderTrade(target, auto, board, stg, err, holErr) {
       .map(r => ({ kind: boardKind(r), t: 0, k: r.sort_key || 0, html: boardCard(r) })),
     ...stg.filter(r => r.act_date === target)
       .map(r => ({ kind: r.role, t: r.act_timing === "open" ? 1 : 2, k: r.strategy_id, html: stgCard(r) })),
+    ...(WATCH || []).map(w => ({ kind: "watch", t: 3, k: w.code, html: watchCard(w) })),
   ].sort((a, b) => a.t - b.t || String(a.k).localeCompare(String(b.k)));
   navCount("top", items.length);
 
@@ -447,11 +462,12 @@ function renderTrade(target, auto, board, stg, err, holErr) {
     `<a href="./" style="color:inherit">回到目前日期</a>`);
   if (holErr) notes.push("休市日讀取失敗，目標日只排除週末，可能不準。");
   if (err) notes.push(`策略訊號讀取失敗：${esc(err.message)}（不代表沒有訊號）`);
+  if (WATCH === null) notes.push("010 盯盤名單讀取失敗（推播紀錄），請看 LINE。");
   if (!bLabel) notes.push("處置股、庫藏股等既有板塊只保留今天／明天，這一天的板塊項目請看 LINE 原訊息。");
 
   const shown = items.filter(i => FILTER === "all" || i.kind === FILTER);
   box.innerHTML = notes.map(n => `<div class="hist">${n}</div>`).join("") +
-    `<div class="flt" id="flt">${[["all", "全部"], ["entry", "進場"], ["exit", "出場"]].map(([k, l]) =>
+    `<div class="flt" id="flt">${[["all", "全部"], ["entry", "進場"], ["exit", "出場"], ["watch", "觀察"]].map(([k, l]) =>
       `<button data-f="${k}" class="${FILTER === k ? "on" : ""}">${l} ${
         k === "all" ? items.length : items.filter(i => i.kind === k).length}</button>`).join("")}</div>` +
     (shown.length ? shown.map(i => i.html).join("")
