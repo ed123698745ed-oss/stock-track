@@ -5,7 +5,9 @@ import pathlib
 _P = pathlib.Path(__file__).resolve().parent.parent / "config" / "perf.json"
 SMALL_N = 30
 # 既有板塊（v_tomorrow.block_code）→ A 系列編號
-BLOCK_SID = {"disposal": "A02", "buyback": "A03", "msci": "A04", "tw50": "A05", "split": "A06"}
+BLOCK_SID = {"disposal": "A02", "buyback": "A03", "msci": "A04", "tw50": "A05"}
+# 提醒日程和回測情境對不上的板塊：不套績效，直接說明（網站讀 app.js 同名設定）
+PENDING = {"split": "A06 績效待核對：提醒是「新股上市日收盤買」，回測是「公告換股日開盤買」，情境不同"}
 
 try:
     STRATS = json.loads(_P.read_text("utf-8"))["strategies"]

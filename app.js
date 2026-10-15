@@ -10,18 +10,29 @@ const W = ["日", "一", "二", "三", "四", "五", "六"];
 let CAL = [], STG = [];
 
 const iso = d => d.toISOString().slice(0, 10);
-// 一律用台北時間（UTC+8）；用 UTC 日期的話，早上 8 點前會變成昨天
-const TPE_NOW = new Date(Date.now() + 8 * 36e5);
-const TODAY = iso(TPE_NOW);
-const NOW_MIN = TPE_NOW.getUTCHours() * 60 + TPE_NOW.getUTCMinutes();
+// 一律用台北時間（UTC+8）；用 UTC 日期的話，早上 8 點前會變成昨天。
+// 每次載入（重新整理、切回頁面）都重算，頁面開著跨過收盤或午夜也會換日。
+let TODAY, NOW_MIN;
+function refreshNow() {
+  const t = new Date(Date.now() + 8 * 36e5);
+  TODAY = iso(t);
+  NOW_MIN = t.getUTCHours() * 60 + t.getUTCMinutes();
+}
+refreshNow();
 const CLOSE_MIN = 13 * 60 + 30;  // 收盤後畫面切到下一個交易日
 const addDays = (d, n) => iso(new Date(new Date(d + "T00:00:00Z").getTime() + n * 864e5));
-let HOL = null;  // 休市日 Set；讀不到時只排除週末
+let HOL = null, HOL_YEARS = null;  // 休市日 Set、已公布休市日的年份；讀不到時只排除週末
 const isTrading = d => {
   const w = new Date(d + "T00:00:00Z").getUTCDay();
   return w !== 0 && w !== 6 && !(HOL && HOL.has(d));
 };
-const nextTrading = d => { let x = addDays(d, 1); while (!isTrading(x)) x = addDays(x, 1); return x; };
+// 下一個交易日；該年度休市日還沒公布就回 null（顯示「日期待確認」，不猜）
+const yearKnown = d => !HOL_YEARS || HOL_YEARS.has(d.slice(0, 4));
+const nextTrading = d => {
+  let x = addDays(d, 1);
+  while (yearKnown(x) && !isTrading(x)) x = addDays(x, 1);
+  return yearKnown(x) ? x : null;
+};
 const tradingGap = (a, b) => { let n = 0, x = a; while (x < b) { x = addDays(x, 1); if (isTrading(x)) n++; } return n; };
 
 function fmt(d) {
@@ -43,7 +54,9 @@ function toast(msg) {
 
 // ---------- 策略績效（config/perf.json，由可執行策略總表產生，LINE 讀同一份）----------
 let PERF = {};
-const BLOCK_SID = { disposal: "A02", buyback: "A03", msci: "A04", tw50: "A05", split: "A06" };
+const BLOCK_SID = { disposal: "A02", buyback: "A03", msci: "A04", tw50: "A05" };
+// 提醒日程和回測情境對不上的板塊：不套績效（scripts/perf.py 同名設定）
+const PENDING = { split: "A06 績效待核對：提醒是「新股上市日收盤買」，回測是「公告換股日開盤買」，情境不同" };
 const SMALL_N = 30;
 async function loadPerf() {
   try {
@@ -309,6 +322,7 @@ $("btnRun").onclick = () => window.open(GH, "_blank");
 
 // ---------- 載入 ----------
 async function load() {
+  refreshNow();
   const until = iso(new Date(Date.now() + 400 * 864e5));
   const [tmr, run, stg, cal, dsp, spl, det, ipo, pos, cbs, lds] = await Promise.all([
     sb.from("v_tomorrow").select("*").order("sort_key"),
@@ -344,9 +358,18 @@ async function load() {
     PERF && Object.keys(PERF).length ? null : loadPerf(),
   ]);
   HOL = hol.error ? null : new Set((hol.data || []).map(r => r.market_date));
+  HOL_YEARS = HOL ? new Set([...HOL].map(d => d.slice(0, 4))) : null;
   const auto = isTrading(TODAY) && NOW_MIN < CLOSE_MIN ? TODAY : nextTrading(TODAY);
   const qd = new URLSearchParams(location.search).get("d");
   const target = /^\d{4}-\d{2}-\d{2}$/.test(qd || "") ? qd : auto;
+  if (!target) {  // 下一年度休市日未公布：不給確定的交易日
+    renderStatus(run.data?.[0]);
+    $("actionTitle").textContent = "交易提醒｜日期待確認";
+    $("actions").innerHTML = `<div class="hist">下一個交易日落在休市日還沒公布的年度，無法確定日期。
+      請到 Actions 執行「休市日」更新後再看。</div>`;
+    $("history").innerHTML = "";
+    return;
+  }
   // 策略訊號另外讀：sql/001 還沒執行時不要拖垮整頁
   const [sDay, sPlan, wl] = await Promise.all([
     sb.from("strategy_actions").select("*").eq("ignored", false)
@@ -426,14 +449,16 @@ function boardCard(r) {
   const c = blkColor(r.block_code);
   const cls = r.act_kind === "buy" ? "buy" : (r.act_kind === "sell" ? "sell" : "");
   const sid = BLOCK_SID[r.block_code];
-  const trade = sid && ["buy", "sell"].includes(r.act_kind);
+  const isTrade = ["buy", "sell"].includes(r.act_kind);
+  const trade = sid && isTrade;
+  const hold = /賣出|回補/.test(r.action || "") ? "若有持倉｜" : "";
   return `
     <div class="card blkline ${cls}" style="--c:${c}">
       <span class="tag ${cls || "warn"}">${esc(r.action)}</span>
       <span class="tag blk" style="--c:${c}">${trade ? esc(sid) + " " : ""}${esc(r.block)}</span>
       <div class="name">${esc(r.company_name || "")} <span class="code">${esc(r.company_code)}</span></div>
-      <div class="meta">${esc(r.detail || "")}</div>
-      ${trade ? m4(perfOf(sid)) : ""}
+      <div class="meta">${esc(hold + (r.detail || ""))}</div>
+      ${isTrade && PENDING[r.block_code] ? `<div class="hist">${esc(PENDING[r.block_code])}</div>` : (trade ? m4(perfOf(sid)) : "")}
       ${noteBlock(r.src_table, { id: r.src_id, checked: r.checked, note: r.note })}
     </div>`;
 }
@@ -443,12 +468,13 @@ const boardKind = r => /買進|放空/.test(r.action || "") ? "entry" : (/賣出
 function renderTrade(target, auto, board, stg, err, holErr) {
   const box = $("actions");
   const history = target < auto;
-  const label = target === TODAY ? "今天" : (target === nextTrading(TODAY)
+  const nt = nextTrading(TODAY);
+  const label = target === TODAY ? "今天" : (target === nt
     ? (target === addDays(TODAY, 1) ? "明天" : "下一交易日") : "");
   $("actionTitle").textContent = `交易提醒｜${fmt(target)}${label ? " " + label : ""}`;
 
   // 既有板塊（v_tomorrow）只有「今天／明天／未處理」三組，對不上目標日就不顯示
-  const bLabel = target === TODAY ? "今天" : (target === nextTrading(TODAY) ? "明天" : null);
+  const bLabel = target === TODAY ? "今天" : (target === nt ? "明天" : null);
   const items = [
     ...board.filter(r => bLabel && r.due_label === bLabel)
       .map(r => ({ kind: boardKind(r), t: 0, k: r.sort_key || 0, html: boardCard(r) })),
@@ -1046,7 +1072,8 @@ function bindRows(box) {
   box.querySelectorAll("button[data-ignore]").forEach(el => {
     el.onclick = async () => {
       const [t, id] = el.dataset.ignore.split(":");
-      await saveRow(t, id, { ignored: true }, "已忽略");
+      // strategy_actions 的 checked 當「使用者手動忽略」記號：推播不會因此推「取消」
+      await saveRow(t, id, t === "strategy_actions" ? { ignored: true, checked: true } : { ignored: true }, "已忽略（只隱藏，不代表策略取消）");
       load();
     };
   });
