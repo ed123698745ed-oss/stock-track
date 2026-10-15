@@ -57,6 +57,11 @@ let PERF = {};
 const BLOCK_SID = { disposal: "A02", buyback: "A03", msci: "A04", tw50: "A05" };
 // 提醒日程和回測情境對不上的板塊：不套績效（scripts/perf.py 同名設定）
 const PENDING = {};
+// 績效和實際提醒情境有落差、仍顯示數字的說明（scripts/perf.py 同名設定）
+const NOTES = {
+  A11: "績效是 T−1 收盤篩選、面額 10 元的回測；實際用 T−6 收盤、實際面額事前試算，名單可能不同",
+  A02: "總表標題寫「出關日收盤」，來源公式實為處置最後一天收盤賣（本提醒依公式）",
+};
 const SMALL_N = 30;
 async function loadPerf() {
   try {
@@ -441,6 +446,7 @@ function stgCard(r) {
       <div class="name">${esc(r.company_name)} <span class="code">${esc(r.company_code)}</span></div>
       <div class="meta">${esc(meta)}</div>
       ${m4(s)}
+      ${s && NOTES[r.strategy_id] ? `<div class="meta">※ ${esc(NOTES[r.strategy_id])}</div>` : ""}
       ${noteBlock("strategy_actions", r)}
     </div>`;
 }
@@ -540,6 +546,7 @@ function scenarioHtml(sid, st, v, s, showName) {
     ${title ? `<div style="font-weight:700">${title}</div>` : ""}
     <div class="meta">${esc(s.side || "")}｜${esc(s.label)}</div>
     ${m4(s)}
+    ${NOTES[sid] ? `<div class="meta">※ ${esc(NOTES[sid])}</div>` : ""}
     <details style="margin-top:8px;padding:10px"><summary style="font-size:13px">完整統計與來源</summary>
       <div class="stats">
         <div><span>樣本數</span> ${s.n ?? "未提供"}</div><div><span>平均報酬</span> ${pct(s.avg, true)}</div>

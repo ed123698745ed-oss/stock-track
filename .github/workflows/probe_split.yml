@@ -1,0 +1,24 @@
+name: 臨時查核
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [.github/workflows/probe_split.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: DRY_RUN=1 python3 -u scripts/disposal_signals.py
+      - name: 現況：A02 已寫入的列
+        run: |
+          python3 - <<'PY'
+          import sys; sys.path.insert(0, "scripts")
+          from calendar_signals import supa
+          rs = supa("strategy_actions?select=variant,company_code,role,act_date,notified_at,ignored&strategy_id=eq.A02&act_date=gte.2026-10-15&order=act_date") or []
+          print(len(rs), "列")
+          for r in rs[:40]: print(r)
+          PY

@@ -48,12 +48,17 @@ S009 = [  # (代號, 名稱, 方向, n, 勝率, p)
 ]
 
 
+KNOWN_YEARS = set()  # 最近一次建立的 Cal 已公布休市日的年份；leg() 用它擋掉猜出來的日期
+
+
 class Cal:
     """交易日曆。years = holidays 表裡有資料的年份（= 已公布的年份）。"""
 
     def __init__(self, holidays):
         self.hol = set(holidays)
         self.years = {d.year for d in self.hol}
+        KNOWN_YEARS.clear()
+        KNOWN_YEARS.update(self.years)
 
     def known(self, *days):
         return all(d.year in self.years for d in days)
@@ -95,7 +100,15 @@ class Cal:
 
 
 def leg(sid, variant, code, name, cycle, side, entry, entry_t, exit_, exit_t, stat):
-    """一筆交易 → 進場、出場兩列。timing=None 代表原表沒寫開盤或收盤。"""
+    """一筆交易 → 進場、出場兩列。timing=None 代表原表沒寫開盤或收盤。
+    日期落在休市日還沒公布的年度（Cal.shift 只能把平日都當交易日猜）：
+    進場日 → 整筆不寫；出場日 → 先只寫進場，出場日等休市日公布後再補。"""
+    if KNOWN_YEARS and entry is not None and entry.year not in KNOWN_YEARS:
+        print(f"  {sid} {code} {name}：進場日 {entry} 所在年度休市日未公布，暫不產生（不猜日期）")
+        return []
+    if KNOWN_YEARS and exit_ is not None and exit_.year not in KNOWN_YEARS:
+        print(f"  {sid} {code} {name}：出場日 {exit_} 所在年度休市日未公布，先只提醒進場")
+        exit_ = None
     rows = []
     for role, d, t, pair, pt in (("entry", entry, entry_t, exit_, exit_t),
                                  ("exit", exit_, exit_t, entry, entry_t)):

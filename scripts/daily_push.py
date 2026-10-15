@@ -61,6 +61,8 @@ def strategy_line(r):
     if tail:
         lines.append("　" + "｜".join(tail))
     lines.append("　" + (stat or "績效：總表未提供"))
+    if stat and perf.NOTES.get(r["strategy_id"]):
+        lines.append("　※" + perf.NOTES[r["strategy_id"]])
     return "\n".join(lines)
 
 

@@ -80,7 +80,7 @@ jobs:
         continue-on-error: true
         run: python3 scripts/calendar_signals.py
 
-      - name: 處置股（A02，依總表：首日收盤買→出關日收盤賣）
+      - name: 處置股（A02：首日收盤買→處置最後一天收盤賣，只做 5／7 日處置）
         if: steps.gate.outputs.go == '1'
         id: disposal
         continue-on-error: true
