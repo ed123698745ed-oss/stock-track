@@ -61,9 +61,12 @@ def main():
     today = dt.datetime.now(TPE).date()
     prev = (today.replace(day=1) - dt.timedelta(days=1))
     months = [(prev.year, prev.month), (today.year, today.month)]
-    # 只看還缺新股上市日或股東會日的；上市日已有的（多半已完成）不再每天查
+    # 缺新股上市日、股東會日，或缺公告換股日（A06 進場依據）且新股還沒上市滿 5 天的
+    listing = {r["company_code"]: r.get("listing_date") for r in supa("v_split?select=company_code,listing_date") or []}
+    recent = (today - dt.timedelta(days=10)).isoformat()
     todo = [r for r in supa("v_split_missing?select=*&limit=50") or []
-            if r.get("need_listing") or r.get("need_meeting")]
+            if r.get("need_listing") or r.get("need_meeting")
+            or (r.get("need_swap") and (listing.get(r["company_code"]) or "9999") >= recent)]
     print(f"日期未齊的追蹤公司 {len(todo)} 家")
     for r in todo:
         code, name = r["company_code"], r.get("company_name") or ""
@@ -87,7 +90,8 @@ def main():
             if swap:
                 s, l = d(F_SUSPEND.search(txt)), d(F_LISTING.search(txt))
                 if s or l:  # 「不適用」的董事會決議不算換股公告
-                    patch.setdefault("p_swap", day.isoformat())
+                    if r.get("need_swap"):
+                        patch.setdefault("p_swap", day.isoformat())
                     if s:
                         patch["p_suspend"] = s.isoformat()
                     if l:
