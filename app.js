@@ -56,7 +56,7 @@ function toast(msg) {
 let PERF = {};
 const BLOCK_SID = { disposal: "A02", buyback: "A03", msci: "A04", tw50: "A05" };
 // 提醒日程和回測情境對不上的板塊：不套績效（scripts/perf.py 同名設定）
-const PENDING = { split: "A06 績效待核對：提醒是「新股上市日收盤買」，回測是「公告換股日開盤買」，情境不同" };
+const PENDING = {};
 const SMALL_N = 30;
 async function loadPerf() {
   try {
@@ -463,8 +463,9 @@ function boardCard(r) {
     </div>`;
 }
 
-// 舊板塊的處置買賣（處置最後一天賣）和總表不同，改看 A02（strategy_actions）
-const OLD_DISPOSAL = r => r.block_code === "disposal" && r.src_table === "signals";
+// 舊板塊的處置、分割買賣和總表規則不同，改看 A02／A06（strategy_actions）；與 daily_push.old_trade 一致
+const OLD_DISPOSAL = r => (r.block_code === "disposal" && r.src_table === "signals")
+  || (r.block_code === "split" && ["buy", "sell"].includes(r.act_kind));
 const boardKind = r => /買進|放空/.test(r.action || "") ? "entry" : (/賣出|回補/.test(r.action || "") ? "exit" : "other");
 
 function renderTrade(target, auto, board, stg, err, holErr) {
@@ -874,7 +875,7 @@ function renderSplit(rows, det, leads) {
   const detections = det.filter(d => !tracked.has(d.company_code));
   const L = leads || [];
   const pending = detections.length + L.length;
-  // 已完成（滿5日賣出已過）或勾了已處理 → 不佔版面，收進最下面摺疊區
+  // 已完成（第5日收盤賣已過）或勾了已處理 → 不佔版面，收進最下面摺疊區
   const done = r => r.status === "已完成" || r.checked;
   const shown = rows.filter(r => !done(r)), hidden = rows.filter(done);
   $("splitTitle").innerHTML = `分割策略${shown.length ? `　${shown.length}` : ""}` +
@@ -923,13 +924,14 @@ function renderSplit(rows, det, leads) {
   const rank = { buy: 0, sell: 0, hold: 1, watch: 2, other: 3 };
   rows.sort((a, b) => (rank[a.grp] ?? 9) - (rank[b.grp] ?? 9));
 
+  // A06（總表 2026-10-15 修正版）：公告換股（盤後）→ 隔日開盤買 → 新股上市第 5 日收盤賣
   const flow = r => flowHtml([
     ["宣告拆股", r.declare_date],
     ["股東會", r.meeting_date],
     ["公告換股", r.swap_date],
-    ["停止買賣", r.suspend_date],
-    ["上市收盤買", r.listing_date],
-    ["滿5日賣出", r.sell_date],
+    ["隔日開盤買", r.swap_date ? nextTrading(r.swap_date) : null],
+    ["新股上市", r.listing_date],
+    ["第5日收盤賣", r.sell_date],
   ], C);
 
   const splitCard = r => {

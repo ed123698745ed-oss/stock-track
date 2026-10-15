@@ -86,6 +86,19 @@ jobs:
         continue-on-error: true
         run: python3 scripts/disposal_signals.py
 
+      # 換股公告多在盤後（最晚見過 18:03）、隔天開盤就要進場：推播前先查一次重大訊息
+      - name: 分割換股日程（重大訊息，上市／上櫃／興櫃）
+        if: steps.gate.outputs.go == '1'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: python3 scripts/split_mops.py
+
+      - name: 分割（A06，依總表：公告後首個可成交開盤買→新股上市第5日收盤賣）
+        if: steps.gate.outputs.go == '1'
+        id: split
+        continue-on-error: true
+        run: python3 scripts/split_signals.py
+
       - name: 推播 LINE
         if: steps.gate.outputs.go == '1'
         env:
@@ -98,6 +111,7 @@ jobs:
           INSIDER_OUTCOME: ${{ steps.insider.outcome }}
           EXRIGHT_OUTCOME: ${{ steps.exright.outcome }}
           DISPOSAL_OUTCOME: ${{ steps.disposal.outcome }}
+          SPLIT_OUTCOME: ${{ steps.split.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           LATE: ${{ (github.event.schedule == '7 13 * * 1-5' || github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py
