@@ -60,7 +60,6 @@ const PENDING = {};
 // 績效和實際提醒情境有落差、仍顯示數字的說明（scripts/perf.py 同名設定）
 const NOTES = {
   A11: "績效是 T−1 收盤篩選、面額 10 元的回測；實際用 T−6 收盤、實際面額事前試算，名單可能不同",
-  A02: "總表標題寫「出關日收盤」，來源公式實為處置最後一天收盤賣（本提醒依公式）",
 };
 const SMALL_N = 30;
 async function loadPerf() {
