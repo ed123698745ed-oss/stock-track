@@ -148,6 +148,50 @@ def log_items(text, tmr, stg, watch, next_day):
     return out
 
 
+ACT = {("entry", "long"): "買進", ("exit", "long"): "賣出", ("entry", "short"): "放空", ("exit", "short"): "回補"}
+
+
+def changes(today):
+    """已推過的策略訊號，之後日期改了（更正）或被作廢（取消）→ [(去重 key, 訊息, 紀錄)]。
+    推播時會記下 sent:<id>:<日期>；之前沒記過的列不比對（不推估當初推了什麼日期）。"""
+    try:
+        rows = supa("strategy_actions?select=*&notified_at=not.is.null"
+                    f"&act_date=gte.{today.isoformat()}&limit=500")
+        if not rows:
+            return []
+        since = (today - dt.timedelta(days=90)).isoformat()
+        keys = {x["key"] for k in ("sent", "fix", "cancel")
+                for x in supa(f"intraday_alerts?select=key&d=gte.{since}&key=like.{k}:*&limit=5000")}
+    except Exception as e:
+        print(f"⚠ 更正／取消比對失敗：{e}")
+        return []
+    sent = {}
+    for k in keys:
+        if k.startswith("sent:"):
+            _, i, d = k.split(":")
+            sent.setdefault(i, set()).add(d)
+    out = []
+    for r in rows:
+        rid, dates = str(r["id"]), sent.get(str(r["id"]))
+        if not dates:
+            continue
+        act = ACT[(r["role"], r["side"])]
+        head = f"{r['strategy_id']} {r['strategy_name']}｜{r['company_name']} {r['company_code']} {act}"
+        if r["ignored"]:
+            if f"cancel:{rid}" not in keys:
+                out.append((f"cancel:{rid}", f"【取消】{head}\n　原 {md(max(dates))}｜訊號已作廢（或在網站按了忽略），不要執行",
+                            dict(r, action="取消")))
+        elif r["act_date"] not in dates and f"fix:{rid}:{r['act_date']}" not in keys:
+            out.append((f"fix:{rid}:{r['act_date']}",
+                        f"【更正】{head}\n　{md(max(dates))} → 改為 {md(r['act_date'])} {TIMING.get(r.get('act_timing'))}",
+                        dict(r, action="更正")))
+    return out
+
+
+def change_lines(chg):
+    return ["", "▍更正／取消（之前推過的訊號有變動）"] + [c[1] for c in chg] if chg else []
+
+
 def warn_key(p):
     import hashlib
     return "warn:" + hashlib.md5(p.encode()).hexdigest()[:16]
@@ -159,13 +203,14 @@ def board_key(r):
     return "tmr:" + hashlib.md5(block_line(r).encode()).hexdigest()[:16]
 
 
-def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep=None):
+def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep=None, chg=None):
     head_day = md(next_day) if next_day else "下一個交易日"
     if late:
-        out = [f"補充提醒｜{head_day} 新增訊號（稍晚公布的資料）"]
-        out += [f"⚠ {p}" for p in problems] + [""]
-        out += [block_line(r) for r in (tmr or [])]
-        out += [strategy_line(r) for r in stg]
+        out = [f"補充提醒｜{head_day}（稍晚公布的資料）"]
+        out += [f"⚠ {p}" for p in problems]
+        if tmr or stg:
+            out += ["", "▍新增"] + [block_line(r) for r in (tmr or [])] + [strategy_line(r) for r in stg]
+        out += change_lines(chg)
         return fit("\n".join(out + ["", site(next_day)]))
     out = [f"交易提醒｜{head_day} 要做的事"]
 
@@ -193,6 +238,7 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
     else:
         out.append(f"明天 {head_day} 沒有要進出場的部位。")
 
+    out += change_lines(chg)
     out += watch_lines(watch)
     out += prep or []
 
@@ -360,32 +406,45 @@ def main():
         problems = [p for p in problems if "融資" not in p]
         warned, _ = safe(lambda: {x["key"] for x in supa(f"intraday_alerts?select=key&d=eq.{today.isoformat()}&key=like.warn:*")})
         problems = [p for p in problems if warn_key(p) not in (warned or set())]
-        if not stg and not tmr and not problems:
+        chg = changes(today)
+        if not stg and not tmr and not problems and not chg:
             print("沒有新增訊號，不補推")
             if any(os.environ.get(k, "success") != "success" for k in
                    ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME")):
                 sys.exit(1)  # 警告稍早已推過；仍讓 Actions 顯示紅燈
             return
-        text = compose(now, tmr, stg, None, next_day, problems, late=True)
+        text = compose(now, tmr, stg, None, next_day, problems, late=True, chg=chg)
     else:
+        chg = changes(today)
         text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
-                       prep=index_prep(cal if hol else None, today))
+                       prep=index_prep(cal if hol else None, today), chg=chg)
     print(text)
     if os.environ.get("DRY_RUN") == "1":
         print("\nDRY_RUN：不推送")
     else:
         status = push_line(text)
         print("\nLINE 回應", status)
+        done_chg = [c for c in chg if c[1] in text]
         log_push("late" if late else "main", text, status, today,
-                 log_items(text, tmr, stg, None if late else read_out("watch010.json"), next_day))
-        ids = [str(r["id"]) for r in (stg or []) if r.get("due_label") == "明天" and r.get("id")
-               and strategy_line(r) in text]  # 被截斷沒送出的不標記，補推會再送
+                 log_items(text, tmr, stg, None if late else read_out("watch010.json"), next_day)
+                 + [{"source": r["strategy_id"], "code": r["company_code"], "name": r["company_name"],
+                     "action": r["action"], "act_date": r["act_date"], "act_timing": r.get("act_timing"),
+                     "line": ln} for _, ln, r in done_chg])
+        sent_rows = [r for r in (stg or []) if r.get("due_label") == "明天" and r.get("id")
+                     and strategy_line(r) in text]  # 被截斷沒送出的不標記，補推會再送
+        ids = [str(r["id"]) for r in sent_rows]
         if ids:
             safe(lambda: supa(f"strategy_actions?id=in.({','.join(ids)})", "PATCH",
                               {"notified_at": now.isoformat()}))
         keys = [{"d": today.isoformat(), "key": board_key(r)} for r in (tmr or [])
                 if r.get("due_label") == "明天" and block_line(r) in text]
         keys += [{"d": today.isoformat(), "key": warn_key(p)} for p in problems]
+        # 記下每筆推出去的日期，之後日期改了或作廢才分得出「更正／取消」
+        keys += [{"d": today.isoformat(), "key": f"sent:{r['id']}:{r['act_date']}"} for r in sent_rows]
+        keys += [{"d": today.isoformat(), "key": k} for k, _, _ in done_chg]
+        keys += [{"d": today.isoformat(), "key": f"sent:{r['id']}:{r['act_date']}"}
+                 for k, _, r in done_chg if k.startswith("fix:")]
+        keys = list({k["key"]: k for k in keys}.values())
         if keys:
             safe(lambda: supa("intraday_alerts?on_conflict=d,key", "POST", keys,
                               prefer="resolution=ignore-duplicates,return=minimal"))
