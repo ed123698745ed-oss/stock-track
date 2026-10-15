@@ -170,7 +170,7 @@ def build(cal, years, tsmc_calls=()):
             ent = cal.month_days(y, 10)[9]
             ext = cal.month_days(y + 1, 1)[7] if cal.known(D(y + 1, 1, 1)) else None
             rows.extend(leg("A10", "長榮航冬季", "2618", "長榮航", str(y), "long",
-                            ent, "open", ext, "open", {"n": 16, "win": 81.3, "p": 0.0053}))
+                            ent, "open", ext, "open", {"n": 16, "win": 87.5, "p": 0.0042}))
             if ext is None:
                 skipped.append(f"A10 長榮航 {y} 出場日（隔年休市日未公布，僅提醒進場）")
         else:
