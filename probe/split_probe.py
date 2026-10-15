@@ -40,3 +40,30 @@ for m in range(6, 11):
     except Exception as e:
         print(m, "月 ERR", e)
     time.sleep(2)
+
+print("=== 10/08 公告內文 ===")
+h = mops({"step": 1, "firstin": 1, "off": 1, "keyword4": "", "code1": "", "TYPEK2": "",
+          "checkbtn": "", "queryName": "co_id", "inpuType": "co_id", "TYPEK": "all",
+          "co_id": CODE, "year": "115", "month": "10", "b_date": "01", "e_date": "31"})
+for tr in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S):
+    oc = re.search(r"seq_no.value='(\d+)'.*?spoke_time.value='(\d+)'.*?spoke_date.value='(\d+)'"
+                   r".*?co_id.value='(\w+)'.*?TYPEK.value='(\w+)'", tr)
+    cells = [_text(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
+    if oc and len(cells) >= 5 and re.search(r"面額|股東臨時會", cells[4]):
+        seq, tm, d8, co, typ = oc.groups()
+        txt = _text(mops({"step": 2, "firstin": 1, "off": 1, "seq_no": seq,
+                          "spoke_time": tm, "spoke_date": d8, "co_id": co, "TYPEK": typ}))
+        i = txt.find("說明")
+        print("---", cells[4], typ)
+        print(txt[i:i + 1800] if i >= 0 else txt[:1800])
+        time.sleep(2)
+
+print("=== 目前面額（上市／上櫃基本資料）===")
+for u, kc, kf in (("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", "公司代號", "普通股每股面額"),
+                  ("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O", "SecuritiesCompanyCode", "ParValueOfCommonStock")):
+    try:
+        for r in json.loads(_get(u, hdr={"Accept": "application/json"})):
+            if str(r.get(kc)).strip() == CODE:
+                print(u.split("/")[-1], r.get(kf))
+    except Exception as e:
+        print(u, "ERR", e)
