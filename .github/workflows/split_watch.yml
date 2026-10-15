@@ -12,6 +12,18 @@ jobs:
   split-watch:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      # 上櫃／興櫃沒有證交所預告表：從公司重大訊息補停止買賣日、新股上市日、股東會日
+      # 觀測站偶爾很慢，失敗不影響後面的面額對帳
+      - name: 重大訊息補換股日程（上市／上櫃／興櫃）
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python3 scripts/split_mops.py
+
       - name: 面額日對帳（上市／上櫃／興櫃）
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
