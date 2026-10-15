@@ -463,6 +463,8 @@ function boardCard(r) {
     </div>`;
 }
 
+// 舊板塊的處置買賣（處置最後一天賣）和總表不同，改看 A02（strategy_actions）
+const OLD_DISPOSAL = r => r.block_code === "disposal" && r.src_table === "signals";
 const boardKind = r => /買進|放空/.test(r.action || "") ? "entry" : (/賣出|回補/.test(r.action || "") ? "exit" : "other");
 
 function renderTrade(target, auto, board, stg, err, holErr) {
@@ -476,7 +478,7 @@ function renderTrade(target, auto, board, stg, err, holErr) {
   // 既有板塊（v_tomorrow）只有「今天／明天／未處理」三組，對不上目標日就不顯示
   const bLabel = target === TODAY ? "今天" : (target === nt ? "明天" : null);
   const items = [
-    ...board.filter(r => bLabel && r.due_label === bLabel)
+    ...board.filter(r => bLabel && r.due_label === bLabel && !OLD_DISPOSAL(r))
       .map(r => ({ kind: boardKind(r), t: 0, k: r.sort_key || 0, html: boardCard(r) })),
     ...stg.filter(r => r.act_date === target)
       .map(r => ({ kind: r.role, t: r.act_timing === "open" ? 1 : 2, k: r.strategy_id, html: stgCard(r) })),
@@ -508,7 +510,7 @@ function renderTrade(target, auto, board, stg, err, holErr) {
   // 日期已過的提醒：移出主清單，保留查閱；不推定成交，也不順延成新訊號
   const old = [
     ...stg.filter(r => r.act_date < target).map(r => ({ d: r.act_date, r, stg: true })),
-    ...board.filter(r => r.due_label === "未處理").map(r => ({ d: r.event_date, r, stg: false })),
+    ...board.filter(r => r.due_label === "未處理" && !OLD_DISPOSAL(r)).map(r => ({ d: r.event_date, r, stg: false })),
   ].sort((a, b) => String(b.d).localeCompare(String(a.d)));
   $("history").innerHTML = old.length ? `<details class="grp"><summary>日期已過（近 14 天）　${old.length}
       <span class="meta">　只供查閱，不代表已成交</span></summary>
@@ -1096,10 +1098,31 @@ function fillForm() {
   syncDates();
 }
 
+// A04／A05 依可執行策略總表：
+//   MSCI（A04）：公布日收盤買 → 生效日收盤賣
+//   0050（A05）：公布後週一收盤買 → 生效日收盤賣（週一休市順延到下一個交易日）
+// 生效日取行事曆；查不到就要手動填，不用「持有 N 天」代替。
+const INDEX_RULE = {
+  msci: { name: "A04", entry: ev => isTrading(ev) ? ev : nextTrading(ev), label: "公布日收盤買" },
+  tw50: { name: "A05", entry: ev => {
+    const w = new Date(ev + "T00:00:00Z").getUTCDay();
+    let x = addDays(ev, ((8 - w) % 7) || 7);  // 下一個週一
+    while (x && !isTrading(x)) x = nextTrading(x);
+    return x;
+  }, label: "公布後週一收盤買" },
+};
 function syncDates() {
   const code = $("fStrategy").value, ev = $("fEvent").value;
   if (!ev || !code) return;
   const eff = CAL.find(c => c.strategy_code === code && c.kind === "effective" && c.event_date >= ev);
+  const rule = INDEX_RULE[code];
+  if (rule) {
+    $("fEntry").value = rule.entry(ev) || "";
+    $("fExit").value = eff ? eff.event_date : "";
+    $("fHint").textContent = `${rule.name}（依總表）：${rule.label}${$("fEntry").value ? " " + fmt($("fEntry").value) : "（日期待確認）"}` +
+      (eff ? ` → 生效日 ${fmt(eff.event_date)} 收盤賣。` : "。行事曆查不到生效日，請手動填出場日（生效日）。");
+    return;
+  }
   if (eff) {
     $("fExit").value = eff.event_date;
     $("fHint").textContent =
@@ -1116,6 +1139,9 @@ $("fEvent").onchange = syncDates;
 $("btnAdd").onclick = async () => {
   const code = $("fCode").value.trim(), name = $("fName").value.trim(), ev = $("fEvent").value;
   if (!code || !ev) { toast("代號和事件日必填"); return; }
+  if (INDEX_RULE[$("fStrategy").value] && (!$("fEntry").value || !$("fExit").value)) {
+    toast("指數調整要有進場日和出場日（生效日），不用持有天數推算"); return;
+  }
   const { data, error } = await sb.rpc("add_manual_signal", {
     p_strategy: $("fStrategy").value, p_code: code, p_name: name || code,
     p_event_date: ev, p_entry_date: $("fEntry").value || null,
