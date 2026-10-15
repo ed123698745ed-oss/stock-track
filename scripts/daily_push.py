@@ -18,6 +18,7 @@ import pathlib
 import sys
 import urllib.request
 
+import perf
 from calendar_signals import Cal, supa
 
 SITE = "https://ed123698745ed-oss.github.io/stock-track/"
@@ -38,6 +39,10 @@ def safe(fn):
         return None, f"{type(e).__name__}: {str(e)[:120]}"
 
 
+# 訊號產生時寫進 detail 的舊版統計（n=… 勝率…% p…）；改由 perf.json 的四指標取代
+OLD_STAT = re.compile(r"n=\d+(?: 勝率[\d.]+%)?(?: p[=<][\d.e-]+)?")
+
+
 def strategy_line(r):
     pair = "出場" if r["role"] == "entry" else "進場"
     lines = [f"【{r['action']}】{TIMING.get(r.get('act_timing'))}　{r['company_name']} {r['company_code']}",
@@ -45,10 +50,17 @@ def strategy_line(r):
              + ("" if r["variant"] == r["company_name"] + r["company_code"] else f"・{r['variant']}")]
     tail = ([f"{pair} {md(r['pair_date'])} {TIMING.get(r.get('pair_timing'))}"]
             if r.get("pair_date") else [])
-    if r.get("detail"):
-        tail.append(re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", r["detail"]))
+    if r["role"] == "exit":
+        tail.append("若有持倉")
+    stat = perf.summary(r["strategy_id"], r.get("variant"))
+    detail = r.get("detail") or ""
+    if stat:
+        detail = "｜".join(x for x in OLD_STAT.sub("", detail).split("｜") if x.strip())
+    if detail:
+        tail.append(re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", detail))
     if tail:
         lines.append("　" + "｜".join(tail))
+    lines.append("　" + (stat or "績效：總表未提供"))
     return "\n".join(lines)
 
 
@@ -59,6 +71,9 @@ def block_line(r):
     sub = re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", sub)
     if sub:
         lines.append("　" + sub)
+    sid = perf.BLOCK_SID.get(r.get("block_code"))
+    if sid and r.get("act_kind") in ("buy", "sell"):
+        lines.append(f"　{sid}｜" + (perf.summary(sid) or "績效：總表未提供"))
     return "\n".join(lines)
 
 
@@ -151,7 +166,7 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
         out += [f"⚠ {p}" for p in problems] + [""]
         out += [block_line(r) for r in (tmr or [])]
         out += [strategy_line(r) for r in stg]
-        return fit("\n".join(out + ["", SITE]))
+        return fit("\n".join(out + ["", site(next_day)]))
     out = [f"交易提醒｜{head_day} 要做的事"]
 
     if run:
@@ -181,19 +196,47 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
     out += watch_lines(watch)
     out += prep or []
 
-    pending = sum(1 for r in (tmr or []) + (stg or [])
-                  if r.get("due_label") in ("今天", "未處理") and not r.get("checked"))
-    if pending:
-        out += ["", f"另有 {pending} 筆今天或之前的待辦還沒勾選。"]
-    out += ["", SITE]
+    out += ["", site(next_day)]
 
     return fit("\n".join(out))
 
 
+def site(day):
+    """網站連結帶目標日期：點開就是這則通知指的那一天，舊連結會標成歷史。"""
+    return f"{SITE}?d={day.isoformat()}" if day else SITE
+
+
+def u16(s):
+    return len(s.encode("utf-16-le")) // 2
+
+
+def split_msgs(text, limit=4800):
+    """依空行切成多則（每則 ≤ limit UTF-16 單位），卡片不會被從中間切開。"""
+    msgs, cur = [], ""
+    for para in text.split("\n\n"):
+        cand = f"{cur}\n\n{para}" if cur else para
+        if u16(cand) <= limit:
+            cur = cand
+            continue
+        if cur:
+            msgs.append(cur)
+        while u16(para) > limit:  # 單段就超長：在卡片開頭「【」前切，切不到才按行切
+            head = para[:limit]
+            i = head.rfind("\n【")
+            cut = head[:i] if i > 0 else (head.rsplit("\n", 1)[0] or head)
+            msgs.append(cut)
+            para = para[len(cut):].lstrip("\n")
+        cur = para
+    if cur:
+        msgs.append(cur)
+    return msgs
+
+
 def fit(text):
-    """LINE 單則上限 5000（UTF-16 單位）；超過就截斷並指向網站。被截掉的項目不會標成已推播。"""
-    if len(text.encode("utf-16-le")) // 2 > 4800:
-        text = text[:4600].rsplit("\n", 1)[0] + f"\n…（其餘請看網站）\n{SITE}"
+    """LINE 一次最多 5 則、每則 5000（UTF-16 單位）。超過 5 則才截斷並指向網站；被截掉的項目不會標成已推播。"""
+    if len(split_msgs(text)) > 5:
+        text = "\n\n".join(split_msgs(text)[:5])
+        text = text[:-300].rsplit("\n", 1)[0] + f"\n…（其餘請看網站）\n{SITE}"
     return text
 
 
@@ -201,7 +244,7 @@ def push_line(text):
     req = urllib.request.Request(
         "https://api.line.me/v2/bot/message/push", method="POST",
         data=json.dumps({"to": os.environ["LINE_USER_ID"].strip(),
-                         "messages": [{"type": "text", "text": text}]}).encode(),
+                         "messages": [{"type": "text", "text": t} for t in split_msgs(text)]}).encode(),
         headers={"Authorization": "Bearer " + os.environ["LINE_CHANNEL_ACCESS_TOKEN"].strip(),
                  "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:

@@ -10,7 +10,19 @@ const W = ["日", "一", "二", "三", "四", "五", "六"];
 let CAL = [], STG = [];
 
 const iso = d => d.toISOString().slice(0, 10);
-const TODAY = iso(new Date());
+// 一律用台北時間（UTC+8）；用 UTC 日期的話，早上 8 點前會變成昨天
+const TPE_NOW = new Date(Date.now() + 8 * 36e5);
+const TODAY = iso(TPE_NOW);
+const NOW_MIN = TPE_NOW.getUTCHours() * 60 + TPE_NOW.getUTCMinutes();
+const CLOSE_MIN = 13 * 60 + 30;  // 收盤後畫面切到下一個交易日
+const addDays = (d, n) => iso(new Date(new Date(d + "T00:00:00Z").getTime() + n * 864e5));
+let HOL = null;  // 休市日 Set；讀不到時只排除週末
+const isTrading = d => {
+  const w = new Date(d + "T00:00:00Z").getUTCDay();
+  return w !== 0 && w !== 6 && !(HOL && HOL.has(d));
+};
+const nextTrading = d => { let x = addDays(d, 1); while (!isTrading(x)) x = addDays(x, 1); return x; };
+const tradingGap = (a, b) => { let n = 0, x = a; while (x < b) { x = addDays(x, 1); if (isTrading(x)) n++; } return n; };
 
 function fmt(d) {
   if (!d) return "—";
@@ -27,6 +39,38 @@ function toast(msg) {
   t.textContent = msg; t.classList.add("on");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("on"), 2200);
+}
+
+// ---------- 策略績效（config/perf.json，由可執行策略總表產生，LINE 讀同一份）----------
+let PERF = {};
+const BLOCK_SID = { disposal: "A02", buyback: "A03", msci: "A04", tw50: "A05", split: "A06" };
+const SMALL_N = 30;
+async function loadPerf() {
+  try {
+    const r = await fetch("config/perf.json", { cache: "no-cache" });
+    PERF = (await r.json()).strategies || {};
+  } catch (e) { PERF = {}; }
+}
+const perfOf = (sid, v) => { const sc = PERF[sid]?.scenarios || {}; return sc[v] || sc["*"] || null; };
+const pct = (x, sign) => x == null ? "未提供"
+  : `${sign && x >= 0 ? "+" : ""}${(x * 100).toFixed(sign ? 2 : 0)}%`;
+const holdTxt = s => s.hold == null ? "未提供" : `${+s.hold.toFixed(1)} ${s.hold_unit}`;
+const kellyTxt = s => s.kelly == null ? (s.na_reason || "未提供")
+  : `${s.kelly.toFixed(2)}（半 ${s.half.toFixed(2)}）`;
+// 訊號產生時寫進 detail 的舊統計（n=… 勝率…% p…），改顯示四指標
+const OLD_STAT = /n=\d+(?: 勝率[\d.]+%)?(?: p[=<][\d.e-]+)?/;
+const cleanDetail = (d, has) => has
+  ? String(d || "").replace(OLD_STAT, "").split("｜").filter(x => x.trim()).join("｜") : (d || "");
+function m4(s) {
+  if (!s) return `<div class="meta">績效：總表未提供</div>`;
+  const small = s.n != null && s.n < SMALL_N;
+  return `<div class="m4">
+      <div><i>平均報酬</i><b>${pct(s.avg, true)}</b></div>
+      <div><i>持有</i><b>${holdTxt(s)}</b></div>
+      <div><i>單利年化</i><b>${pct(s.ann)}</b></div>
+      <div><i>凱利</i><b>${kellyTxt(s)}</b></div>
+    </div>
+    <div class="meta">回測 n=${s.n ?? "未提供"}${small ? `　<b style="color:var(--warn)">⚠ 小樣本</b>` : ""}</div>`;
 }
 
 // ---------- 板塊 ----------
@@ -46,13 +90,33 @@ const blkColor = c => (BLOCKS[c] || {}).color || "var(--dim)";
 function ensureSections() {
   if ($("blocksReady")) return;
   document.head.insertAdjacentHTML("beforeend", `<style>
-    .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(54px,1fr));
-      gap:6px;margin:14px 0 4px}
-    .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;
-      padding:10px 8px;text-align:center}
-    .kpi b{display:block;font-size:21px;font-variant-numeric:tabular-nums;line-height:1.2}
-    .kpi span{font-size:11px;color:var(--dim)}
-    .kpi.hot b{color:var(--buy)}
+    /* 分頁 */
+    .tabs{display:flex;gap:6px;margin-top:10px}
+    .tabs button{flex:1;padding:8px 0;border-radius:10px}
+    .tabs button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+    .wrap>.offtab,.nav[hidden]{display:none!important}
+    .note{display:flex;gap:8px;margin-top:10px;align-items:center}
+    .note button{flex:none;white-space:nowrap}
+    .note input{padding:7px 10px}
+    .flt{display:flex;gap:6px;margin:4px 0 10px}
+    .flt button{padding:5px 12px;font-size:13px;border-radius:999px}
+    .flt button.on{border-color:var(--ink)}
+    .hist{border:1px solid var(--warn);background:var(--warn-bg);color:var(--warn);
+      border-radius:10px;padding:10px 12px;font-size:14px;margin:10px 0}
+
+    /* 四指標：桌機一排四格，手機 2×2 */
+    .m4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+    .m4 div{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:0}
+    .m4 i{display:block;font-style:normal;font-size:11px;color:var(--dim)}
+    .m4 b{font-variant-numeric:tabular-nums;font-size:14px;word-break:break-all}
+    @media (max-width:520px){.m4{grid-template-columns:1fr 1fr}}
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;font-size:13px;margin-top:8px;
+      font-variant-numeric:tabular-nums}
+    .stats span{color:var(--dim)}
+    .kv{font-size:13px;margin-top:6px;line-height:1.5;word-break:break-word}
+    .kv span{color:var(--dim)}
+    .ctl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+    .ctl input{grid-column:1/-1}
 
     /* 板塊標題與色條 */
     h2.blk{display:flex;align-items:center;gap:8px}
@@ -125,8 +189,8 @@ function ensureSections() {
       color:var(--dim);font-size:12px}
   </style>`);
 
-  $("actionTitle").textContent = "明日重點";
-  $("actionTitle").insertAdjacentHTML("beforebegin", `<div class="kpis" id="kpis"></div>`);
+  $("actionTitle").textContent = "交易提醒";
+  $("actions").insertAdjacentHTML("afterend", `<div id="history"></div>`);
   // 「進行中部位」跟各板塊的「持有中」重複，整段收起來
   $("holding").previousElementSibling.hidden = true;
   $("holding").hidden = true;
@@ -153,19 +217,42 @@ function ensureSections() {
     <h2 id="detTitle" hidden>其他偵測公告</h2><div id="detections"></div>`);
 
   $("indexCal").appendChild($("calendar"));
+  $("stgTitle").textContent = "定期交易（之後的進出場）";
   buildNav();
+  buildTabs();
+}
+
+// ---------- 分頁：交易提醒／策略一覽 ----------
+let TAB = "main";
+try { TAB = localStorage.getItem("tab") || "main"; } catch (e) {}
+function buildTabs() {
+  $("nav").insertAdjacentHTML("beforebegin", `<div class="tabs" id="tabs">
+    <button data-tab="main">交易提醒</button><button data-tab="perf">策略一覽</button></div>`);
+  const body = document.querySelector("#app > .wrap");
+  body.insertAdjacentHTML("afterbegin", `<div id="perfTab" data-tab="perf"></div>`);
+  $("tabs").querySelectorAll("button").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+  setTab(TAB);
+}
+function setTab(t) {
+  TAB = t;
+  try { localStorage.setItem("tab", t); } catch (e) {}
+  $("tabs").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  $("nav").hidden = t !== "main";
+  [...document.querySelector("#app > .wrap").children].forEach(el =>
+    el.classList.toggle("offtab", (el.dataset.tab || "main") !== t));
+  window.scrollTo({ top: 0 });
 }
 
 // ---------- 快速跳轉列 ----------
 const NAV = [
-  { id: "top",      label: "待辦",   c: "var(--buy)" },
+  { id: "top",      label: "提醒",   c: "var(--buy)" },
   { id: "dspTitle", label: "處置股", c: BLOCKS.disposal.color },
   { id: "ipoTitle", label: "IPO",    c: BLOCKS.ipo.color },
   { id: "cbTitle",  label: "可轉債", c: BLOCKS.cb.color },
   { id: "splitTitle", label: "分割", c: BLOCKS.split.color },
   { id: "bbTitle",  label: "庫藏股", c: BLOCKS.buyback.color },
   { id: "idxTitle", label: "指數調整", c: BLOCKS.tw50.color },
-  { id: "stgTitle", label: "策略排程", c: BLOCKS.strategy.color },
+  { id: "stgTitle", label: "定期交易", c: BLOCKS.strategy.color },
 ];
 
 function buildNav() {
@@ -250,16 +337,27 @@ async function load() {
   const detOther = detAll.filter(r => r.strategy_code !== "split");
 
   const POS = pos.data || [];
-  // 策略訊號另外讀：sql/001 還沒執行時不要拖垮整頁
-  const [sAct, sPlan] = await Promise.all([
-    sb.from("v_strategy_actions").select("*"),
-    sb.from("strategy_actions").select("*").eq("ignored", false).gte("act_date", TODAY)
-      .lte("act_date", iso(new Date(Date.now() + 60 * 864e5))).order("act_date"),
+  // 目標交易日：盤中（13:30 前）看今天，收盤後看下一個交易日；LINE 連結的 ?d= 優先
+  const [hol] = await Promise.all([
+    sb.from("holidays").select("market_date").gte("market_date", addDays(TODAY, -60)).limit(1000),
+    PERF && Object.keys(PERF).length ? null : loadPerf(),
   ]);
-  const todo = (tmr.data || []).concat((sAct.data || []).map(stgTodo));
+  HOL = hol.error ? null : new Set((hol.data || []).map(r => r.market_date));
+  const auto = isTrading(TODAY) && NOW_MIN < CLOSE_MIN ? TODAY : nextTrading(TODAY);
+  const qd = new URLSearchParams(location.search).get("d");
+  const target = /^\d{4}-\d{2}-\d{2}$/.test(qd || "") ? qd : auto;
+  // 策略訊號另外讀：sql/001 還沒執行時不要拖垮整頁
+  const [sDay, sPlan] = await Promise.all([
+    sb.from("strategy_actions").select("*").eq("ignored", false)
+      .gte("act_date", addDays(target, -14)).lte("act_date", target).order("act_date"),
+    sb.from("strategy_actions").select("*").eq("ignored", false).gt("act_date", target)
+      .lte("act_date", addDays(target, 60)).order("act_date"),
+  ]);
   renderStatus(run.data?.[0]);
-  renderTomorrow(todo);
-  renderStrategyPlan(sPlan.data || [], sAct.error || sPlan.error);
+  renderTrade(target, auto, tmr.data || [], sDay.data || [], sDay.error,
+    !!hol.error || !(hol.data || []).length);  // 讀不到或空表都要講，不能當成沒有休市日
+  renderStrategyPlan(sPlan.data || [], sDay.error || sPlan.error, target);
+  renderPerfTab();
   renderCalendar(CAL);
   renderDisposals((dsp.data || []).filter(r => r.grp !== "出關觀察"));  // Ed 不看出關
   renderIpos(ipo.data || []);
@@ -271,22 +369,7 @@ async function load() {
                   "indexPos", "idxTitle", "指數調整", BLOCKS.tw50.color);
   renderDetections(detOther);
   renderStrategies(STG);
-  renderKpis(todo, dsp.data || [], ipo.data || [], detAll);
   fillForm();
-}
-
-function renderKpis(tmr, dsp, ipo, det) {
-  const inDisp = dsp.filter(d => d.grp === "處置中").length;
-  const newDisp = dsp.filter(d => d.is_new).length;
-  const ipoHot = ipo.filter(r => r.grp === "今日重點").length;
-  const late = tmr.filter(r => r.due_label === "未處理").length;
-  $("kpis").innerHTML = `
-    <div class="kpi ${tmr.length ? "hot" : ""}"><b>${tmr.length}</b><span>待辦</span></div>
-    <div class="kpi ${late ? "hot" : ""}"><b>${late}</b><span>未處理</span></div>
-    <div class="kpi ${newDisp ? "hot" : ""}"><b>${newDisp}</b><span>新處置</span></div>
-    <div class="kpi"><b>${inDisp}</b><span>處置中</span></div>
-    <div class="kpi ${ipoHot ? "hot" : ""}"><b>${ipo.filter(r => r.grp !== "已掛牌").length}</b><span>IPO</span></div>
-    <div class="kpi ${det.length ? "hot" : ""}"><b>${det.length}</b><span>待看公告</span></div>`;
 }
 
 function renderStatus(r) {
@@ -303,55 +386,185 @@ function renderStatus(r) {
   el.innerHTML = `<span class="dot ${cls}"></span>最後更新 ${ts}・${label}${stale}`;
 }
 
-// ---------- 明日重點（所有板塊合併）----------
-function renderTomorrow(rows) {
-  const box = $("actions");
-  if (!rows.length) {
-    $("actionTitle").textContent = "待辦";
-    navCount("top", 0);
-    box.innerHTML = `<div class="empty">目前沒有要處理的事。</div>
-      <h3 style="font-size:13px;color:var(--dim);margin:14px 0 8px;letter-spacing:.08em">今天　0</h3>
-      <div class="empty">本日無新增處置</div>`;
-    return;
-  }
-  const order = { "未處理": 0, "今天": 1, "明天": 2 };
-  rows.sort((a, b) => (order[a.due_label] ?? 9) - (order[b.due_label] ?? 9) ||
-    (a.act_kind === "sell" ? 0 : 1) - (b.act_kind === "sell" ? 0 : 1));
-  const late = rows.filter(r => r.due_label === "未處理").length;
-  $("actionTitle").textContent = `待辦　${rows.length}${late ? `（未處理 ${late}）` : ""}`;
-  navCount("top", rows.length);
+// ---------- 交易提醒（目標交易日）----------
+let FILTER = "all";
+const KIND = { entry: "進場", exit: "出場" };
 
-  const groups = {};
-  rows.forEach(r => (groups[r.due_label] = groups[r.due_label] || []).push(r));
+function stgCard(r) {
+  const s = perfOf(r.strategy_id, r.variant);
+  const kind = (r.role === "entry") === (r.side === "long") ? "buy" : "sell";
+  const c = BLOCKS.strategy.color;
+  const meta = [stgVar(r), stgPair(r), r.role === "exit" ? "若有持倉" : "",
+                cleanDetail(r.detail, !!s)].filter(Boolean).join("｜");
+  return `
+    <div class="card blkline ${kind}" style="--c:${c}">
+      <span class="tag ${kind}">${stgAction(r)}・${timingOf(r.act_timing)}</span>
+      <span class="tag blk" style="--c:${c}">${esc(r.strategy_id)} ${esc(r.strategy_name)}</span>
+      <div class="name">${esc(r.company_name)} <span class="code">${esc(r.company_code)}</span></div>
+      <div class="meta">${esc(meta)}</div>
+      ${m4(s)}
+      ${noteBlock("strategy_actions", r)}
+    </div>`;
+}
 
-  const card = r => {
-    const c = blkColor(r.block_code);
-    const cls = r.act_kind === "buy" ? "buy" : (r.act_kind === "sell" ? "sell" : "");
-    const actTag = r.act_kind === "buy" ? "buy" : (r.act_kind === "sell" ? "sell" : "warn");
-    return `
+function boardCard(r) {
+  const c = blkColor(r.block_code);
+  const cls = r.act_kind === "buy" ? "buy" : (r.act_kind === "sell" ? "sell" : "");
+  const sid = BLOCK_SID[r.block_code];
+  const trade = sid && ["buy", "sell"].includes(r.act_kind);
+  return `
     <div class="card blkline ${cls}" style="--c:${c}">
-      <span class="tag ${actTag}">${esc(r.action)}</span>
-      <span class="tag blk" style="--c:${c}">${esc(r.block)}</span>
-      <span class="tag" style="color:var(--dim)">${fmt(r.event_date)}</span>
+      <span class="tag ${cls || "warn"}">${esc(r.action)}</span>
+      <span class="tag blk" style="--c:${c}">${trade ? esc(sid) + " " : ""}${esc(r.block)}</span>
       <div class="name">${esc(r.company_name || "")} <span class="code">${esc(r.company_code)}</span></div>
       <div class="meta">${esc(r.detail || "")}</div>
+      ${trade ? m4(perfOf(sid)) : ""}
       ${noteBlock(r.src_table, { id: r.src_id, checked: r.checked, note: r.note })}
+    </div>`;
+}
+
+const boardKind = r => /買進|放空/.test(r.action || "") ? "entry" : (/賣出|回補/.test(r.action || "") ? "exit" : "other");
+
+function renderTrade(target, auto, board, stg, err, holErr) {
+  const box = $("actions");
+  const history = target < auto;
+  const label = target === TODAY ? "今天" : (target === nextTrading(TODAY)
+    ? (target === addDays(TODAY, 1) ? "明天" : "下一交易日") : "");
+  $("actionTitle").textContent = `交易提醒｜${fmt(target)}${label ? " " + label : ""}`;
+
+  // 既有板塊（v_tomorrow）只有「今天／明天／未處理」三組，對不上目標日就不顯示
+  const bLabel = target === TODAY ? "今天" : (target === nextTrading(TODAY) ? "明天" : null);
+  const items = [
+    ...board.filter(r => bLabel && r.due_label === bLabel)
+      .map(r => ({ kind: boardKind(r), t: 0, k: r.sort_key || 0, html: boardCard(r) })),
+    ...stg.filter(r => r.act_date === target)
+      .map(r => ({ kind: r.role, t: r.act_timing === "open" ? 1 : 2, k: r.strategy_id, html: stgCard(r) })),
+  ].sort((a, b) => a.t - b.t || String(a.k).localeCompare(String(b.k)));
+  navCount("top", items.length);
+
+  const notes = [];
+  if (history) notes.push(`這是 ${fmt(target)} 的通知內容，日期已過，只供查閱，不是新的訊號。` +
+    `<a href="./" style="color:inherit">回到目前日期</a>`);
+  if (holErr) notes.push("休市日讀取失敗，目標日只排除週末，可能不準。");
+  if (err) notes.push(`策略訊號讀取失敗：${esc(err.message)}（不代表沒有訊號）`);
+  if (!bLabel) notes.push("處置股、庫藏股等既有板塊只保留今天／明天，這一天的板塊項目請看 LINE 原訊息。");
+
+  const shown = items.filter(i => FILTER === "all" || i.kind === FILTER);
+  box.innerHTML = notes.map(n => `<div class="hist">${n}</div>`).join("") +
+    `<div class="flt" id="flt">${[["all", "全部"], ["entry", "進場"], ["exit", "出場"]].map(([k, l]) =>
+      `<button data-f="${k}" class="${FILTER === k ? "on" : ""}">${l} ${
+        k === "all" ? items.length : items.filter(i => i.kind === k).length}</button>`).join("")}</div>` +
+    (shown.length ? shown.map(i => i.html).join("")
+      : `<div class="empty">${err ? "讀取失敗，無法判斷有沒有訊號。" :
+          `${fmt(target)} 沒有${FILTER === "all" ? "要進出場的部位" : KIND[FILTER] + "項目"}。`}</div>`);
+  box.querySelectorAll("#flt button").forEach(b => b.onclick = () => {
+    FILTER = b.dataset.f; renderTrade(target, auto, board, stg, err, holErr);
+  });
+  bindRows(box);
+
+  // 日期已過的提醒：移出主清單，保留查閱；不推定成交，也不順延成新訊號
+  const old = [
+    ...stg.filter(r => r.act_date < target).map(r => ({ d: r.act_date, r, stg: true })),
+    ...board.filter(r => r.due_label === "未處理").map(r => ({ d: r.event_date, r, stg: false })),
+  ].sort((a, b) => String(b.d).localeCompare(String(a.d)));
+  $("history").innerHTML = old.length ? `<details class="grp"><summary>日期已過（近 14 天）　${old.length}
+      <span class="meta">　只供查閱，不代表已成交</span></summary>
+      ${old.map(({ d, r, stg }) => `<div class="card mini">
+        <span class="tag" style="color:var(--dim)">${fmt(d)}</span>
+        <span class="tag" style="color:var(--dim)">${stg ? esc(stgAction(r) + "・" + timingOf(r.act_timing)) : esc(r.action || "")}</span>
+        <span class="tag" style="color:var(--dim)">${stg ? esc(r.strategy_id + " " + r.strategy_name) : esc(r.block || "")}</span>
+        <div class="name" style="font-size:15px">${esc(r.company_name || "")} <span class="code">${esc(r.company_code)}</span></div>
+        ${stg && r.pair_date ? `<div class="meta">${esc(stgPair(r))}</div>` : ""}
+      </div>`).join("")}</details>` : "";
+}
+
+// ---------- 策略一覽（config/perf.json）----------
+const PV = { q: "", grp: "all", sort: "id" };
+const SORTS = {
+  id: ["編號", null], avg: ["平均報酬", s => s.avg], ann: ["單利年化", s => s.ann],
+  kelly: ["凱利", s => s.kelly], hold: ["持有天數（短到長）", s => s.hold == null ? null : -s.hold],
+};
+const fnum = (x, d = 2) => x == null ? "未提供" : (typeof x === "number" ? +x.toFixed(d) + "" : esc(x));
+const fp = p => p == null ? "未提供" : (typeof p === "string" ? esc(p) : (p < 0.0001 ? p.toExponential(1) : +p.toFixed(4) + ""));
+const links = t => esc(t).replace(/https?:\/\/\S+/g, u => `<a href="${u}" target="_blank" rel="noopener">連結</a>`);
+
+function scenarioHtml(sid, st, v, s, showName) {
+  const title = showName ? `${esc(sid)} ${esc(st.name)}${v === "*" ? "" : "・" + esc(v)}` : (v === "*" ? "" : esc(v));
+  return `<div style="margin-top:12px">
+    ${title ? `<div style="font-weight:700">${title}</div>` : ""}
+    <div class="meta">${esc(s.side || "")}｜${esc(s.label)}</div>
+    ${m4(s)}
+    <details style="margin-top:8px;padding:10px"><summary style="font-size:13px">完整統計與來源</summary>
+      <div class="stats">
+        <div><span>樣本數</span> ${s.n ?? "未提供"}</div><div><span>平均報酬</span> ${pct(s.avg, true)}</div>
+        <div><span>勝率</span> ${s.win == null ? "未提供" : (s.win * 100).toFixed(1) + "%"}</div>
+        <div><span>賠率 R</span> ${s.R == null ? (s.na_reason || "未提供") : fnum(s.R)}</div>
+        <div><span>凱利</span> ${s.kelly == null ? (s.na_reason || "未提供") : fnum(s.kelly)}</div>
+        <div><span>半凱利</span> ${s.half == null ? (s.na_reason || "未提供") : fnum(s.half)}</div>
+        <div><span>標準差</span> ${s.sd == null ? "未提供" : (s.sd * 100).toFixed(2) + "%"}</div>
+        <div><span>t 值</span> ${fnum(s.t)}</div>
+        <div><span>雙尾 p</span> ${fp(s.p)}</div>
+        <div><span>平均持有</span> ${holdTxt(s)}</div>
+        <div><span>單利年化</span> ${pct(s.ann)}</div>
+      </div>
+      <div class="kv"><span>進出場：</span>${esc(s.rule)}</div>
+      ${s.filter ? `<div class="kv"><span>篩選：</span>${esc(s.filter)}</div>` : ""}
+      <div class="kv"><span>樣本期間：</span>${esc(s.period || "未提供")}　<span>頻率：</span>${esc(s.freq || "未提供")}</div>
+      <div class="kv"><span>成本與滑價：</span>${esc(s.cost || "未提供")}</div>
+      ${s.verify ? `<div class="kv"><span>驗證：</span>${esc(s.verify)}</div>` : ""}
+      ${s.risk ? `<div class="kv"><span>風險：</span>${esc(s.risk)}</div>` : ""}
+      <div class="kv"><span>來源：</span>${links(s.source || "未提供")}</div>
+      <div class="kv"><span>註：</span>單利年化＝單筆周轉換算，不是帳戶實際年化；凱利只是歷史統計，不是下單比例。</div>
+    </details></div>`;
+}
+
+function renderPerfTab() {
+  const box = $("perfTab");
+  if (!box) return;
+  const ids = Object.keys(PERF);
+  if (!ids.length) { box.innerHTML = `<h2>策略一覽</h2><div class="empty">讀不到策略績效檔（config/perf.json）。</div>`; return; }
+  const q = PV.q.trim().toLowerCase();
+  const ok = sid => (PV.grp === "all" || PERF[sid].group === PV.grp) &&
+    (!q || (sid + PERF[sid].name + Object.keys(PERF[sid].scenarios).join("")).toLowerCase().includes(q));
+  const live = ids.filter(sid => ok(sid) && PERF[sid].status !== "暫停");
+  const paused = ids.filter(sid => ok(sid) && PERF[sid].status === "暫停");
+
+  const card = sid => {
+    const st = PERF[sid];
+    const sc = Object.entries(st.scenarios);
+    return `<div class="card">
+      <span class="tag" style="color:var(--dim)">${st.group === "A" ? "A 系列" : "Bot"}</span>
+      <span class="tag ${st.status === "上線測試中" ? "" : "warn"}" style="${st.status === "上線測試中" ? "color:var(--dim)" : ""}">${esc(st.status)}</span>
+      ${sc.length > 1 ? `<span class="tag" style="color:var(--dim)">${sc.length} 個情境</span>` : ""}
+      <div class="name">${esc(sid)} ${esc(st.name)}</div>
+      ${sc.map(([v, s]) => scenarioHtml(sid, st, v, s, false)).join("")}
     </div>`;
   };
 
-  const head = { "未處理": "未處理（日子已經到了）", "今天": "今天", "明天": "明天" };
-  // 「今天」這組一定要畫出來，就算沒事也要 —— 空白和「抓取失敗所以空白」
-  // 看起來一模一樣，要有一句話把兩者分開。
-  box.innerHTML = ["未處理", "今天", "明天"]
-    .filter(g => groups[g] || g === "今天").map(g => {
-      const list = groups[g] || [];
-      const noDisp = g === "今天" && !list.some(r => r.block_code === "disposal");
-      return `<h3 style="font-size:13px;color:var(--dim);margin:14px 0 8px;letter-spacing:.08em">
-       ${head[g]}　${list.length}</h3>${
-        noDisp ? `<div class="empty" style="margin-bottom:8px">本日無新增處置</div>` : ""
-      }${list.map(card).join("")}`;
-    }).join("");
-  bindRows(box);
+  let body;
+  if (PV.sort === "id") {
+    body = live.map(card).join("") || `<div class="empty">沒有符合的策略。</div>`;
+  } else {
+    // 依指標排序時每個情境分開排，不拿最佳情境代表整個策略；缺值排最後
+    const [label, key] = SORTS[PV.sort];
+    const flat = live.flatMap(sid => Object.entries(PERF[sid].scenarios).map(([v, s]) => ({ sid, v, s, x: key(s) })));
+    flat.sort((a, b) => (a.x == null) - (b.x == null) || (b.x ?? 0) - (a.x ?? 0));
+    body = `<div class="meta" style="margin-bottom:8px">依「${label}」排序，每個情境分開排；缺值排最後。持有天數的交易日與日曆日混排，請看單位。</div>` +
+      flat.map(({ sid, v, s }) => `<div class="card">${scenarioHtml(sid, PERF[sid], v, s, true)}</div>`).join("");
+  }
+  box.innerHTML = `<h2>策略一覽</h2>
+    <div class="ctl">
+      <input type="text" id="pvQ" placeholder="搜尋編號或名稱" value="${esc(PV.q)}">
+      <select id="pvG"><option value="all">全部</option><option value="A">A 系列</option><option value="Bot">Bot</option></select>
+      <select id="pvS">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}">排序：${l}</option>`).join("")}</select>
+    </div>
+    <div class="meta" style="margin-bottom:10px">數字來自「可執行策略總表」；空白＝原始資料不足，不推估。回測 n&lt;${SMALL_N} 標 ⚠ 小樣本。</div>
+    ${body}
+    ${paused.length ? `<details class="grp"><summary>暫停／封存　${paused.length}</summary>${paused.map(card).join("")}</details>` : ""}`;
+  $("pvG").value = PV.grp; $("pvS").value = PV.sort;
+  $("pvQ").oninput = e => { PV.q = e.target.value; renderPerfTab(); const i = $("pvQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); };
+  $("pvG").onchange = e => { PV.grp = e.target.value; renderPerfTab(); };
+  $("pvS").onchange = e => { PV.sort = e.target.value; renderPerfTab(); };
 }
 
 // ---------- 策略訊號（日曆型策略等，strategy_actions）----------
@@ -364,19 +577,7 @@ const stgVar = r => r.variant === `${r.company_name}${r.company_code}` ? "" : r.
 const stgPair = r => r.pair_date
   ? `${r.role === "entry" ? "出場" : "進場"} ${fmt(r.pair_date)} ${timingOf(r.pair_timing)}` : "";
 
-// 轉成 v_tomorrow 的欄位，讓「待辦」直接合併顯示
-function stgTodo(r) {
-  return {
-    due_label: r.due_label, act_kind: r.act_kind,
-    action: `${stgAction(r)}・${timingOf(r.act_timing)}`,
-    block: `${r.strategy_id} ${r.strategy_name}`, block_code: "strategy",
-    event_date: r.act_date, company_name: r.company_name, company_code: r.company_code,
-    detail: [stgVar(r), stgPair(r), r.detail].filter(Boolean).join("｜"),
-    src_table: "strategy_actions", src_id: r.id, checked: r.checked, note: r.note,
-  };
-}
-
-function renderStrategyPlan(rows, err) {
+function renderStrategyPlan(rows, err, target) {
   const box = $("stgPlan");
   navCount("stgTitle", rows.length);
   if (err) {
@@ -384,13 +585,13 @@ function renderStrategyPlan(rows, err) {
       <br>（第一次使用請先在 Supabase 執行 sql/001_strategy_actions.sql）</div>`;
     return;
   }
-  if (!rows.length) { box.innerHTML = `<div class="empty">未來 60 天沒有策略要進出場。</div>`; return; }
+  if (!rows.length) { box.innerHTML = `<div class="empty">${fmt(target)} 之後 60 天沒有策略要進出場。</div>`; return; }
   const c = BLOCKS.strategy.color;
   const byDay = {};
   rows.forEach(r => (byDay[r.act_date] = byDay[r.act_date] || []).push(r));
   box.innerHTML = Object.entries(byDay).map(([d, list]) => {
-    const days = Math.round((new Date(d) - new Date(TODAY)) / 864e5);
-    const when = days === 0 ? "今天" : (days === 1 ? "明天" : `${days} 天後`);
+    const days = tradingGap(target, d);
+    const when = `${days} 個交易日後`;
     return `
     <div class="card blkline ${days <= 3 ? "soon" : ""}" style="--c:${c}">
       <span class="tag ${days <= 3 ? "warn" : ""}" style="${days <= 3 ? "" : "color:var(--dim)"}">${when}</span>
@@ -403,7 +604,7 @@ function renderStrategyPlan(rows, err) {
           <span class="tag blk" style="--c:${c}">${esc(r.strategy_id)} ${esc(r.strategy_name)}</span>
           <div class="name" style="font-size:16px">${esc(r.company_name)}
             <span class="code">${esc(r.company_code)}</span></div>
-          <div class="meta">${esc([stgVar(r), stgPair(r), r.detail].filter(Boolean).join("｜"))}</div>
+          <div class="meta">${esc([stgVar(r), stgPair(r), cleanDetail(r.detail, !!perfOf(r.strategy_id, r.variant))].filter(Boolean).join("｜"))}</div>
         </div>`;
       }).join("")}
     </div>`;
@@ -799,15 +1000,18 @@ function renderDetections(rows) {
 
 // ---------- 共用：勾選與備註 ----------
 function noteBlock(table, r) {
-  return `
-    <div class="row">
-      <label class="chk">
+  const chk = table === "split_watch" ? `<label class="chk">
         <input type="checkbox" data-t="${table}" data-f="checked" data-id="${r.id}"
           ${r.checked ? "checked" : ""}> 已處理
-      </label>
-      ${["signals", "disposals", "strategy_actions"].includes(table)
-        ? `<button class="small" data-ignore="${table}:${r.id}">忽略</button>` : ""}
-    </div>
+      </label>` : "";
+  const ign = ["signals", "disposals", "strategy_actions"].includes(table)
+    ? `<button class="small" data-ignore="${table}:${r.id}">忽略</button>` : "";
+  if (!chk) return `
+    <div class="note">
+      <input type="text" placeholder="備註" data-t="${table}" data-f="note" data-id="${r.id}"
+             value="${esc(r.note || "")}">${ign}
+    </div>`;
+  return `<div class="row">${chk}</div>
     <div class="row">
       <input type="text" placeholder="備註" data-t="${table}" data-f="note" data-id="${r.id}"
              value="${esc(r.note || "")}">
