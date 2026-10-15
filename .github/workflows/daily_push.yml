@@ -80,6 +80,12 @@ jobs:
         continue-on-error: true
         run: python3 scripts/calendar_signals.py
 
+      - name: 處置股（A02，依總表：首日收盤買→出關日收盤賣）
+        if: steps.gate.outputs.go == '1'
+        id: disposal
+        continue-on-error: true
+        run: python3 scripts/disposal_signals.py
+
       - name: 推播 LINE
         if: steps.gate.outputs.go == '1'
         env:
@@ -91,6 +97,7 @@ jobs:
           CASH_OUTCOME: ${{ steps.cash.outcome }}
           INSIDER_OUTCOME: ${{ steps.insider.outcome }}
           EXRIGHT_OUTCOME: ${{ steps.exright.outcome }}
+          DISPOSAL_OUTCOME: ${{ steps.disposal.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           LATE: ${{ (github.event.schedule == '7 13 * * 1-5' || github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py

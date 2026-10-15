@@ -12,4 +12,4 @@ jobs:
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -u probe/p4.py
+      - run: DRY_RUN=1 python3 -u scripts/disposal_signals.py

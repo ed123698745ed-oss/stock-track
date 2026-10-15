@@ -409,6 +409,8 @@ def market_problems(today, cal):
         out.append("現增公告抓取失敗，004 今天可能漏掉新公告（明天會再掃最近 7 天）")
     if os.environ.get("INSIDER_OUTCOME", "success") != "success":
         out.append("內部人申報轉讓抓取失敗，019 今天可能漏掉訊號（明天會再掃最近 7 天）")
+    if os.environ.get("DISPOSAL_OUTCOME", "success") != "success":
+        out.append("處置股訊號更新失敗，A02 今天可能漏掉新處置（明天會再算最近 30 天）")
     if os.environ.get("EXRIGHT_OUTCOME", "success") != "success":
         out.append("除權息預告表抓取失敗，A11 今天可能漏掉 T-5 進場的訊號")
     if cal:
@@ -433,6 +435,8 @@ def main():
     problems = []
 
     tmr, e1 = safe(lambda: supa("v_tomorrow?select=*"))
+    if tmr:  # 舊板塊的處置買賣（處置最後一天賣）和總表不同，改由 A02（strategy_actions）提醒
+        tmr = [r for r in tmr if not (r.get("block_code") == "disposal" and r.get("src_table") == "signals")]
     if e1:
         problems.append(f"既有板塊讀取失敗 {e1}")
     stg, e2 = safe(lambda: supa("v_strategy_actions?select=*"))
@@ -463,7 +467,7 @@ def main():
         if not stg and not tmr and not problems and not chg:
             print("沒有新增訊號，不補推")
             if any(os.environ.get(k, "success") != "success" for k in
-                   ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME")):
+                   ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME", "DISPOSAL_OUTCOME")):
                 sys.exit(1)  # 警告稍早已推過；仍讓 Actions 顯示紅燈
             return
         text = compose(now, tmr, stg, None, next_day, problems, late=True, chg=chg)
@@ -500,7 +504,7 @@ def main():
         if keys:
             safe(lambda: supa("intraday_alerts?on_conflict=d,key", "POST", keys,
                               prefer="resolution=ignore-duplicates,return=minimal"))
-    failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME")
+    failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME", "DISPOSAL_OUTCOME")
               if os.environ.get(k, "success") != "success"]
     if (tmr is None and stg is None) or failed:
         sys.exit(1)  # 訊息已送出；讓 Actions 顯示紅燈，不要靜靜綠燈
