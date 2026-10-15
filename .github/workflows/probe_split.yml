@@ -1,0 +1,15 @@
+name: 臨時查核（分割）
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [probe/**, .github/workflows/probe_split.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 probe/p2.py
