@@ -323,7 +323,8 @@ async function load() {
     sb.from("v_ipos").select("*"),
     sb.from("v_positions").select("*"),
     sb.from("v_cb").select("*"),
-    sb.from("v_split_leads").select("*").limit(40),
+    // 已在追蹤清單的線索不再列（追蹤卡已有流程圖）；只留還沒處理的新線索
+    sb.from("v_split_leads").select("*").eq("tracked", false).limit(40),
   ]);
   const err = [tmr, run, stg, cal, dsp, spl, det, ipo, pos, cbs, lds].map(r => r.error).find(Boolean);
   if (err) {
