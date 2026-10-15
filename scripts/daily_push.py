@@ -67,13 +67,17 @@ def strategy_line(r):
 def block_line(r):
     name = f"{r.get('company_name') or ''} {r.get('company_code') or ''}".strip()
     lines = [f"【{r.get('action') or '注意'}】{name}"]
-    sub = "｜".join(x for x in (r.get("block"), r.get("detail")) if x)
+    hold = "若有持倉" if re.search(r"賣出|回補", r.get("action") or "") else None
+    sub = "｜".join(x for x in (r.get("block"), hold, r.get("detail")) if x)
     sub = re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", sub)
     if sub:
         lines.append("　" + sub)
     sid = perf.BLOCK_SID.get(r.get("block_code"))
-    if sid and r.get("act_kind") in ("buy", "sell"):
-        lines.append(f"　{sid}｜" + (perf.summary(sid) or "績效：總表未提供"))
+    if r.get("act_kind") in ("buy", "sell"):
+        if r.get("block_code") in perf.PENDING:
+            lines.append("　" + perf.PENDING[r["block_code"]])
+        elif sid:
+            lines.append(f"　{sid}｜" + (perf.summary(sid) or "績效：總表未提供"))
     return "\n".join(lines)
 
 
@@ -151,40 +155,63 @@ def log_items(text, tmr, stg, watch, next_day):
 ACT = {("entry", "long"): "買進", ("exit", "long"): "賣出", ("entry", "short"): "放空", ("exit", "short"): "回補"}
 
 
+def snap(r):
+    """推播當下的內容快照：日期｜開收盤｜配對日期。任何一項變了都算更正。"""
+    return f"{r['act_date']}|{r.get('act_timing') or ''}|{r.get('pair_date') or ''}"
+
+
+def sent_key(r, now):
+    return f"sent:{r['id']}:{int(now.timestamp())}:{snap(r)}"
+
+
 def changes(today):
-    """已推過的策略訊號，之後日期改了（更正）或被作廢（取消）→ [(去重 key, 訊息, 紀錄)]。
-    推播時會記下 sent:<id>:<日期>；之前沒記過的列不比對（不推估當初推了什麼日期）。"""
+    """已推過的策略訊號，和「最後一次成功推播的內容」不同 → 更正；被訊號來源作廢 → 取消。
+    回傳 [(去重 key, 訊息, 紀錄)]。推播時記 sent:<id>:<時間>:<快照>；沒記過的列不比對（不推估）。
+    網站上手動「忽略」（checked=true）只是隱藏，不推取消。"""
     try:
         rows = supa("strategy_actions?select=*&notified_at=not.is.null"
                     f"&act_date=gte.{today.isoformat()}&limit=500")
         if not rows:
             return []
         since = (today - dt.timedelta(days=90)).isoformat()
-        keys = {x["key"] for k in ("sent", "fix", "cancel")
-                for x in supa(f"intraday_alerts?select=key&d=gte.{since}&key=like.{k}:*&limit=5000")}
+        alerts = [x for k in ("sent", "cancel")
+                  for x in supa(f"intraday_alerts?select=key,created_at&d=gte.{since}&key=like.{k}:*&limit=5000")]
     except Exception as e:
         print(f"⚠ 更正／取消比對失敗：{e}")
         return []
-    sent = {}
-    for k in keys:
-        if k.startswith("sent:"):
-            _, i, d = k.split(":")
-            sent.setdefault(i, set()).add(d)
+    keys = {x["key"] for x in alerts}
+    last = {}  # id → (排序鍵, 快照)；舊格式 sent:<id>:<日期> 只有日期
+    for x in alerts:
+        k = x["key"].split(":", 3)
+        if k[0] != "sent":
+            continue
+        if len(k) == 4:
+            order, sp = (x["created_at"], int(k[2])), k[3]
+        else:
+            order, sp = (x["created_at"], 0), k[2]
+        if k[1] not in last or order > last[k[1]][0]:
+            last[k[1]] = (order, sp)
     out = []
     for r in rows:
-        rid, dates = str(r["id"]), sent.get(str(r["id"]))
-        if not dates:
+        rid = str(r["id"])
+        if rid not in last:
             continue
+        old = last[rid][1].split("|")
         act = ACT[(r["role"], r["side"])]
         head = f"{r['strategy_id']} {r['strategy_name']}｜{r['company_name']} {r['company_code']} {act}"
+        was = f"{md(old[0])}" + (f" {TIMING.get(old[1] or None)}" if len(old) > 1 else "")
         if r["ignored"]:
-            if f"cancel:{rid}" not in keys:
-                out.append((f"cancel:{rid}", f"【取消】{head}\n　原 {md(max(dates))}｜訊號已作廢（或在網站按了忽略），不要執行",
-                            dict(r, action="取消")))
-        elif r["act_date"] not in dates and f"fix:{rid}:{r['act_date']}" not in keys:
-            out.append((f"fix:{rid}:{r['act_date']}",
-                        f"【更正】{head}\n　{md(max(dates))} → 改為 {md(r['act_date'])} {TIMING.get(r.get('act_timing'))}",
-                        dict(r, action="更正")))
+            if r.get("checked") or f"cancel:{rid}" in keys:
+                continue  # 手動忽略不是策略取消；取消只推一次
+            tail = "不要進場" if r["role"] == "entry" else "沒有進場就不用處理；若已有持倉請自行判斷"
+            out.append((f"cancel:{rid}", f"【取消】{head}\n　原 {was}｜訊號已作廢，{tail}", dict(r, action="取消")))
+            continue
+        same = old[0] == r["act_date"] if len(old) == 1 else last[rid][1] == snap(r)
+        if not same:
+            now = f"{md(r['act_date'])} {TIMING.get(r.get('act_timing'))}"
+            pair = (f"｜{'出場' if r['role'] == 'entry' else '進場'} {md(r['pair_date'])}"
+                    if r.get("pair_date") and len(old) > 2 and old[2] != r["pair_date"] else "")
+            out.append((None, f"【更正】{head}\n　原 {was} → 改為 {now}{pair}", dict(r, action="更正")))
     return out
 
 
@@ -256,45 +283,71 @@ def u16(s):
     return len(s.encode("utf-16-le")) // 2
 
 
-def split_msgs(text, limit=4800):
-    """依空行切成多則（每則 ≤ limit UTF-16 單位），卡片不會被從中間切開。"""
-    msgs, cur = [], ""
-    for para in text.split("\n\n"):
-        cand = f"{cur}\n\n{para}" if cur else para
+def _hard_cut(u, limit):
+    """單一卡片就超長（極少見）：先按行、再按字切，長度一律用 UTF-16 計。"""
+    out, buf = [], ""
+    for ln in u.split("\n"):
+        while u16(ln) > limit:
+            i, n = 0, 0
+            while i < len(ln) and n + u16(ln[i]) <= limit:
+                n += u16(ln[i]); i += 1
+            if buf:
+                out.append(buf); buf = ""
+            out.append(ln[:i]); ln = ln[i:]
+        cand = f"{buf}\n{ln}" if buf else ln
         if u16(cand) <= limit:
-            cur = cand
-            continue
-        if cur:
-            msgs.append(cur)
-        while u16(para) > limit:  # 單段就超長：在卡片開頭「【」前切，切不到才按行切
-            head = para[:limit]
-            i = head.rfind("\n【")
-            cut = head[:i] if i > 0 else (head.rsplit("\n", 1)[0] or head)
-            msgs.append(cut)
-            para = para[len(cut):].lstrip("\n")
-        cur = para
+            buf = cand
+        else:
+            out.append(buf); buf = ln
+    return out + ([buf] if buf else [])
+
+
+def split_msgs(text, limit=4800):
+    """切成多則，每則 ≤ limit（UTF-16 單位，和 LINE 的算法一致）。
+    以卡片（【…】）、段落標題（▍）、空行為單位，卡片不會被從中間切開；不截尾。"""
+    units, cur = [], []
+    for ln in text.split("\n"):
+        if cur and (ln == "" or ln.startswith(("【", "▍"))):
+            units.append("\n".join(cur)); cur = []
+        cur.append(ln)
     if cur:
-        msgs.append(cur)
+        units.append("\n".join(cur))
+    msgs, buf = [], ""
+    for u in units:
+        cand = f"{buf}\n{u}" if buf else u
+        if u16(cand) <= limit:
+            buf = cand
+            continue
+        if buf.strip():
+            msgs.append(buf.strip("\n"))
+        buf = ""
+        if u16(u) > limit:
+            pieces = _hard_cut(u, limit)
+            msgs += [x for x in pieces[:-1] if x.strip()]
+            u = pieces[-1] if pieces else ""
+        buf = u
+    if buf.strip():
+        msgs.append(buf.strip("\n"))
     return msgs
 
 
 def fit(text):
-    """LINE 一次最多 5 則、每則 5000（UTF-16 單位）。超過 5 則才截斷並指向網站；被截掉的項目不會標成已推播。"""
-    if len(split_msgs(text)) > 5:
-        text = "\n\n".join(split_msgs(text)[:5])
-        text = text[:-300].rsplit("\n", 1)[0] + f"\n…（其餘請看網站）\n{SITE}"
-    return text
+    return text  # 不再截尾：超過 5 則由 push_line 分批送
 
 
 def push_line(text):
-    req = urllib.request.Request(
-        "https://api.line.me/v2/bot/message/push", method="POST",
-        data=json.dumps({"to": os.environ["LINE_USER_ID"].strip(),
-                         "messages": [{"type": "text", "text": t} for t in split_msgs(text)]}).encode(),
-        headers={"Authorization": "Bearer " + os.environ["LINE_CHANNEL_ACCESS_TOKEN"].strip(),
-                 "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return r.status
+    """LINE 一次最多 5 則；更多就分批送，每批都要成功。"""
+    msgs, status = split_msgs(text), None
+    for i in range(0, len(msgs), 5):
+        req = urllib.request.Request(
+            "https://api.line.me/v2/bot/message/push", method="POST",
+            data=json.dumps({"to": os.environ["LINE_USER_ID"].strip(),
+                             "messages": [{"type": "text", "text": t} for t in msgs[i:i + 5]]}).encode(),
+            headers={"Authorization": "Bearer " + os.environ["LINE_CHANNEL_ACCESS_TOKEN"].strip(),
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            status = r.status
+    return status
 
 
 def read_out(name):
@@ -440,10 +493,9 @@ def main():
                 if r.get("due_label") == "明天" and block_line(r) in text]
         keys += [{"d": today.isoformat(), "key": warn_key(p)} for p in problems]
         # 記下每筆推出去的日期，之後日期改了或作廢才分得出「更正／取消」
-        keys += [{"d": today.isoformat(), "key": f"sent:{r['id']}:{r['act_date']}"} for r in sent_rows]
-        keys += [{"d": today.isoformat(), "key": k} for k, _, _ in done_chg]
-        keys += [{"d": today.isoformat(), "key": f"sent:{r['id']}:{r['act_date']}"}
-                 for k, _, r in done_chg if k.startswith("fix:")]
+        keys += [{"d": today.isoformat(), "key": sent_key(r, now)} for r in sent_rows]
+        keys += [{"d": today.isoformat(), "key": k} for k, _, _ in done_chg if k]  # 取消
+        keys += [{"d": today.isoformat(), "key": sent_key(r, now)} for k, _, r in done_chg if not k]  # 更正後的新內容
         keys = list({k["key"]: k for k in keys}.values())
         if keys:
             safe(lambda: supa("intraday_alerts?on_conflict=d,key", "POST", keys,
