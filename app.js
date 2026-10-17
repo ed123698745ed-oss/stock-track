@@ -59,7 +59,7 @@ const BLOCK_SID = { disposal: "A02", buyback: "A03", msci: "A04", tw50: "A05" };
 const PENDING = {};
 // 績效和實際提醒情境有落差、仍顯示數字的說明（scripts/perf.py 同名設定）
 const NOTES = {
-  A11: "總表仍是 R01 正式版數字；R04 已獲 Eve 複審通過（83 筆、平均 5.10%、資金加權年化 107%），待總表同步後更新",
+  A11: "年化以資金加權持有11.98交易日計（T−5～T0全額，之後只計配股與現金股利占用），不是帳戶年報酬；2025年17筆平均僅+0.08%",
 };
 const SMALL_N = 30;
 async function loadPerf() {
