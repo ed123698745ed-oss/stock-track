@@ -4,17 +4,27 @@ permissions: { contents: write }
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env: { PYTHONUNBUFFERED: '1', SUPABASE_URL: "${{ secrets.SUPABASE_URL }}", SUPABASE_SERVICE_KEY: "${{ secrets.SUPABASE_SERVICE_KEY }}", DRY_RUN: '1' }
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - run: |
           mkdir -p /tmp/a
-          (python3 scripts/calendar_signals.py || true) > /tmp/a/cal.txt 2>&1
-          (python3 scripts/event_signals.py || true) > /tmp/a/event.txt 2>&1
-          (DAYS=7 python3 scripts/cash_issue.py || true) > /tmp/a/cash.txt 2>&1
-          (DAYS=7 python3 scripts/insider.py || true) > /tmp/a/insider.txt 2>&1
-          (python3 scripts/exright.py || true) > /tmp/a/exright.txt 2>&1
+          python3 - <<'PY' > /tmp/a/tsmc.txt 2>&1
+          import re, sys, urllib.request, urllib.parse, time
+          sys.path.insert(0, "scripts")
+          from calendar_signals import fetch_tsmc_calls
+          ua = "Mozilla/5.0"
+          for y in (2025, 2026):
+              data = urllib.parse.urlencode({"encodeURIComponent": 1, "step": 1, "firstin": 1, "off": 1,
+                  "TYPEK": "sii", "year": str(y - 1911), "month": "all", "co_id": "2330"}).encode()
+              req = urllib.request.Request("https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1", data=data, headers={"User-Agent": ua})
+              html = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "replace")
+              for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.S):
+                  cells = [re.sub(r"<[^>]+>|&nbsp;|\s+", " ", c).strip() for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.S)]
+                  if cells and (cells[0] == "2330" or "公司" in cells[0]):
+                      print(y, " | ".join(c[:60] for c in cells))
+              time.sleep(2)
+          PY
       - run: |
           git config user.name github-actions; git config user.email actions@github.com
           git checkout --orphan tmp-audit; git rm -rfq .; cp /tmp/a/* .
