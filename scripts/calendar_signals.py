@@ -321,8 +321,11 @@ def main():
     calls = set(manual.get("tsmc_earnings_calls", []))
     try:  # 021：自動抓法說日，失敗時只用手動清單
         auto = fetch_tsmc_calls([today.year, today.year + 1])
-        print(f"台積電法說日（公開資訊觀測站）：{auto}")
-        calls |= set(auto)
+        # 觀測站「法人說明會一覽」含受邀參加的投資論壇等非季度場次（2026 年另有 3/12、4/25、5/29、9/14），
+        # 021 回測只用季度法說（1、4、7、10 月）；其他月份的場次不採，要用請加進手動清單
+        quarterly = [c for c in auto if int(c[5:7]) in (1, 4, 7, 10)]
+        print(f"台積電法說日（公開資訊觀測站）：{auto}；採用季度場次：{quarterly}")
+        calls |= set(quarterly)
     except Exception as e:
         print(f"⚠ 台積電法說日抓取失敗，只用手動清單：{e}")
     rows, skipped = build(cal, [today.year - 1, today.year, today.year + 1],

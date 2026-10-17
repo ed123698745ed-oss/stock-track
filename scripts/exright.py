@@ -20,7 +20,7 @@ from calendar_signals import Cal, leg, supa
 from cash_issue import _get
 
 TPE = dt.timezone(dt.timedelta(hours=8))
-STAT = {"name": "大幅除權息", "n": 82, "win": 72.0, "p": 0.0000041}  # R01 正式版
+STAT = {"name": "大幅除權息", "n": 83, "win": 72.3, "p": 0.0000041}  # R04（推播顯示以 perf.json 為準）
 DROP, DRAG = 0.15, 0.05
 
 
@@ -125,6 +125,7 @@ def main():
         for x in rs:
             x["detail"] = (("⚠ 接近門檻（股利若更正可能翻轉）｜" if near else "") +
                            f"{e['t0']:%m/%d} 除權息｜{tag}｜" +
+                           (f"同期現增（認購率 {e['sub']:g}，不計入幅度）｜" if e.get("sub") else "") +
                            (f"原股 T0 收盤賣；配股 {e['stock']:g} 股／股等官方可賣日收盤賣（公告後另推提醒）｜"
                             if e["stock"] else "") + x["detail"])
         rows += rs
