@@ -224,7 +224,8 @@ def main():
         print("market_days 沒有資料，先跑 scripts/market.py")
         return
     rows, watch, notes = build(days, cal)
-    rows = [r for r in rows if r["act_date"] >= today.isoformat()]
+    t = today.isoformat()  # 進場日已過但出場未到的也寫：行情晚到一天時，出場提醒與 014 事件窗才不會漏
+    rows = [r for r in rows if r["act_date"] >= t or (r.get("pair_date") or "") >= t]
     print(f"行情 {len(days)} 天：{min(x['d'] for x in days)} ~ {max(x['d'] for x in days)}")
     for r in sorted(rows, key=lambda r: r["act_date"]):
         print(f"  {r['act_date']} {r['act_timing']:5} {r['role']:5} {r['side']:5} "

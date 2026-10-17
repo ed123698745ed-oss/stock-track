@@ -120,6 +120,23 @@ def main():
         rows += legs
         held[code] = ext
 
+    # 已寫進場、但出場列還沒有的事件（當時出場日所在年度休市日未公布）：休市日公布後補出場列
+    try:
+        ents = supa("strategy_actions?select=company_code,company_name,cycle,act_date&strategy_id=eq.019&role=eq.entry"
+                    f"&ignored=is.false&act_date=gte.{(today - dt.timedelta(days=20)).isoformat()}")
+        for e in ents or []:
+            if (e["company_code"], e["cycle"]) in own or any(
+                    r["company_code"] == e["company_code"] and r["cycle"] == e["cycle"] for r in rows):
+                continue
+            ent = dt.date.fromisoformat(e["act_date"])
+            ext = cal.shift(ent, HOLD019 - 1)
+            if not cal.known(ext):
+                continue
+            print(f"  補出場：{e['company_code']} {e['company_name']} {ent} 進場 → {ext} 收盤回補")
+            rows += [x for x in leg("019", "內部人申報轉讓", e["company_code"], e["company_name"], e["cycle"], "short",
+                                    ent, "open", ext, "close", STAT019) if x["role"] == "exit"]
+    except Exception as ex:
+        print(f"  ⚠ 019 補出場列失敗：{ex}")
     rows = [r for r in rows if r["act_date"] >= today.isoformat()]
     if dry:
         print(f"DRY_RUN：不寫入（{len(rows)} 列）")

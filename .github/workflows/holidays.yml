@@ -3,7 +3,8 @@ name: 更新休市日
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 1 1 * *'
+    - cron: '0 1 1 * *'      # 每月 1 日台北 09:00
+    - cron: '0 1 * * 1'      # 每週一台北 09:00：年底前要早點把隔年休市日收進來，訊號才不會跨年算不出日期
 
 jobs:
   holidays:
@@ -72,11 +73,16 @@ jobs:
           for roc, name, why in skipped:
               print("   ", roc, name, "→", why)
 
-          # 合理性檢查：台股一年的休市日（不含週末）約 18~30 天。
+          # 合理性檢查：台股一年的休市日（不含週末）約 18~30 天，逐年檢查。
           # 數量異常代表 TWSE 改了資料格式或我的過濾失效，寧可不寫也不要汙染資料庫。
-          if not (15 <= len(rows) <= 40):
-              raise SystemExit(
-                  f"休市日數量 {len(rows)} 天不在合理範圍(15~40)，判斷資料格式可能有變，不寫入")
+          # （年底 TWSE 可能同時回傳今年與明年，總數會超過 40，所以不能用總數檢查）
+          by_year = {}
+          for r in rows:
+              by_year.setdefault(r["market_date"][:4], []).append(r)
+          print("\n各年度休市日：" + "、".join(f"{y} 年 {len(v)} 天" for y, v in sorted(by_year.items())))
+          bad = {y: len(v) for y, v in by_year.items() if not (15 <= len(v) <= 40)}
+          if bad:
+              raise SystemExit(f"休市日數量不在合理範圍(15~40)：{bad}，判斷資料格式可能有變，不寫入")
 
           # 分批寫入，避免一次太多觸發 504
           for i in range(0, len(rows), 10):
@@ -87,6 +93,13 @@ jobs:
 
           n = supa("rpc/recalc_signal_dates", "POST", {})
           print(f"\n重算後有 {n} 筆訊號的進出場日被修正")
+
+          have = sorted({r["market_date"][:4] for r in supa("holidays?select=market_date&limit=5000", "GET")})
+          print(f"holidays 表目前有的年份：{have}")
+          nxt_year = str(__import__("datetime").date.today().year + 1)
+          if nxt_year not in have:
+              print(f"⚠ {nxt_year} 年休市日還沒入庫：跨年的訊號（例如 A10 長榮航出場、009 統領進場）算不出日期，"
+                    f"TWSE 公布後請再跑一次本工作流程")
 
           nxt = supa("v_next_actions?select=company_code,company_name,action,entry_date,exit_date", "GET")
           print(f"明日行動清單: {len(nxt or [])} 筆")

@@ -16,6 +16,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 import urllib.error
@@ -225,25 +226,35 @@ def build(cal, years, tsmc_calls=()):
 
 
 # ---------------- 021 台積電法說日（公開資訊觀測站「法人說明會一覽」）----------------
+QUARTERLY = re.compile(r"財務報告.{0,20}業績展望")  # 季度法說的擇要訊息固定寫法；受邀參加的投資論壇、Investor Day 不算
+
+
 def parse_calls(html, code="2330"):
-    """t100sb02_1 結果頁 → [YYYY-MM-DD]。每列：公司代號、公司名稱、召開日期(民國)、時間…"""
-    import re
-    out = set()
+    """t100sb02_1 結果頁 → ([季度法說 YYYY-MM-DD], [其他場次 YYYY-MM-DD 摘要])。
+    每列：公司代號、公司名稱、召開日期(民國)、時間、地點、擇要訊息…
+    台積電在觀測站也申報受邀參加的券商論壇、Investor Day，021 回測只用季度法說，所以依擇要訊息篩。"""
+    keep, other = set(), []
     for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.S):
         cells = [re.sub(r"<[^>]+>|&nbsp;|\s+", " ", c).strip()
                  for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
         if len(cells) >= 3 and cells[0] == code:
             m = re.fullmatch(r"(\d{2,3})/(\d{2})/(\d{2})", cells[2])
-            if m:
-                out.add(f"{int(m.group(1)) + 1911}-{m.group(2)}-{m.group(3)}")
-    return sorted(out)
+            if not m:
+                continue
+            d = f"{int(m.group(1)) + 1911}-{m.group(2)}-{m.group(3)}"
+            summary = cells[5] if len(cells) > 5 else ""
+            if QUARTERLY.search(summary):
+                keep.add(d)
+            else:
+                other.append(f"{d} {summary[:24]}")
+    return sorted(keep), other
 
 
 def fetch_tsmc_calls(years):
     import urllib.parse
     ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
           "(KHTML, like Gecko) Chrome/128.0 Safari/537.36")
-    found = set()
+    found, skipped = set(), []
     for y in years:
         data = urllib.parse.urlencode({"encodeURIComponent": 1, "step": 1, "firstin": 1, "off": 1,
                                        "TYPEK": "sii", "year": str(y - 1911), "month": "all",
@@ -251,8 +262,12 @@ def fetch_tsmc_calls(years):
         req = urllib.request.Request("https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1",
                                      data=data, headers={"User-Agent": ua})
         with urllib.request.urlopen(req, timeout=30) as r:
-            found |= set(parse_calls(r.read().decode("utf-8", "replace")))
+            k, o = parse_calls(r.read().decode("utf-8", "replace"))
+            found |= set(k)
+            skipped += o
         time.sleep(2)
+    if skipped:
+        print("  觀測站其他場次（非季度法說，不採）：" + "；".join(skipped))
     return sorted(found)
 
 
@@ -321,7 +336,7 @@ def main():
     calls = set(manual.get("tsmc_earnings_calls", []))
     try:  # 021：自動抓法說日，失敗時只用手動清單
         auto = fetch_tsmc_calls([today.year, today.year + 1])
-        print(f"台積電法說日（公開資訊觀測站）：{auto}")
+        print(f"台積電季度法說日（公開資訊觀測站，擇要訊息含「財務報告…業績展望」）：{auto}")
         calls |= set(auto)
     except Exception as e:
         print(f"⚠ 台積電法說日抓取失敗，只用手動清單：{e}")

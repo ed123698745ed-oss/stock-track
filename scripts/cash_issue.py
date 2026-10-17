@@ -167,7 +167,8 @@ def parse_detail(text, code=None):
 # ---------------- 017：公告查詢（股票核准上市櫃＝12、發行新股前公告＝11）----------------
 SUBJ017 = re.compile(r"現金增資|現增")
 SKIP017 = re.compile(r"初次|特別股|公司債|權利證書|終止|下市|下櫃|換發|註銷|盈餘|存託憑證")  # 海外存託憑證（GDR）現增：Ed 決定排除
-D017 = re.compile(r"開始買賣日期\s*[：:]?\s*(?:民國)?\s*" + r"(\d{2,3})\s*[/年]\s*(\d{1,2})\s*[/月]\s*(\d{1,2})")
+D017 = re.compile(r"(?:開始買賣日期|上市買賣日期|上櫃買賣日期|上市日期|上櫃日期|掛牌(?:買賣)?日期|上市\(櫃\)日期|上市（櫃）日期)"
+                  r"\s*[：:]?\s*(?:民國)?\s*" + r"(\d{2,3})\s*[/年]\s*(\d{1,2})\s*[/月]\s*(\d{1,2})")
 DATE_ANY = re.compile(r"(?:民國)?\s*(\d{2,3})\s*[/年]\s*(\d{1,2})\s*[/月]\s*(\d{1,2})\s*日?")
 
 
@@ -208,7 +209,8 @@ def parse017(text, ann):
     if not ds:
         for m in DATE_ANY.finditer(text):
             after = text[m.end():m.end() + 18]
-            if "字第" in after or not re.search(r"上市|上櫃|掛牌|買賣", after):
+            before = text[max(0, m.start() - 18):m.start()]
+            if "字第" in after or not re.search(r"上市|上櫃|掛牌|買賣", after + before):
                 continue
             try:
                 ds.append(dt.date(int(m.group(1)) + 1911, int(m.group(2)), int(m.group(3))))
@@ -348,6 +350,19 @@ def main():
             void[co] = ((d8, tm), f"比例更正為每仟股 {info['ratio']:.2f} 股，未達 50 股")
     for co in void:
         seen.pop(co, None)
+    # 公告掃描只看最近幾天；已入庫的現增（cash_issues）每晚也重算一次，
+    # 休市日晚公布（出場日跨年）或某晚失敗時，進出場列才補得回來。作廢過的列 ignored 不會被 upsert 蓋掉。
+    try:
+        lo, hi = (today - dt.timedelta(days=30)).isoformat(), (today + dt.timedelta(days=90)).isoformat()
+        for v in supa(f"cash_issues?select=*&pay_end=gte.{lo}&pay_end=lte.{hi}") or []:
+            if v["company_code"] in seen or v["company_code"] in void or float(v["ratio"]) <= TH004:
+                continue
+            info = {"ratio": float(v["ratio"]), "ratio_src": v.get("ratio_src"),
+                    "pay_start": dt.date.fromisoformat(v["pay_start"]), "pay_end": dt.date.fromisoformat(v["pay_end"]),
+                    "base": dt.date.fromisoformat(v["cycle"]) if v.get("cycle") else None}
+            seen[v["company_code"]] = build004(cal, v["company_code"], v["company_name"], info)
+    except Exception as e:
+        print(f"  ⚠ cash_issues 重算失敗：{e}")
     for rs in seen.values():
         rows += rs
 
