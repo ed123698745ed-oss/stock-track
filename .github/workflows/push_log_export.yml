@@ -8,6 +8,10 @@ on:
         description: '往回幾天'
         required: false
         default: '7'
+      raw:
+        description: "1＝另輸出原文 JSON"
+        required: false
+        default: "0"
 
 permissions:
   contents: read
@@ -21,6 +25,7 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       DAYS: ${{ github.event.inputs.days }}
+      RAW: ${{ github.event.inputs.raw }}
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/export_push_log.py

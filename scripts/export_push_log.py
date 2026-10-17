@@ -37,3 +37,9 @@ for src in sorted(by):
         print(f"| {r['push_date']} | {r['mode']} | {r.get('name') or ''} {r.get('code') or ''} | {r.get('action') or ''} "
               f"| {r.get('act_date') or ''} | {T.get(r.get('act_timing'), '')} |")
 print("===END===")
+if os.environ.get("RAW") == "1":
+    import json
+    full = supa(f"push_messages?select=id,sent_at,mode,status,text&sent_at=gte.{start.isoformat()}&order=sent_at")
+    print("===RAW===")
+    print(json.dumps({"messages": full, "items": rows}, ensure_ascii=False))
+    print("===RAWEND===")
