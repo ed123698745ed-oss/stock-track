@@ -1,0 +1,21 @@
+name: 臨時查核（查完刪除）
+on: { workflow_dispatch: }
+permissions: { contents: write }
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env: { PYTHONUNBUFFERED: '1', SUPABASE_URL: "${{ secrets.SUPABASE_URL }}", SUPABASE_SERVICE_KEY: "${{ secrets.SUPABASE_SERVICE_KEY }}", DRY_RUN: '1' }
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p /tmp/a
+          (python3 scripts/calendar_signals.py || true) > /tmp/a/cal.txt 2>&1
+          (python3 scripts/event_signals.py || true) > /tmp/a/event.txt 2>&1
+          (DAYS=7 python3 scripts/cash_issue.py || true) > /tmp/a/cash.txt 2>&1
+          (DAYS=7 python3 scripts/insider.py || true) > /tmp/a/insider.txt 2>&1
+          (python3 scripts/exright.py || true) > /tmp/a/exright.txt 2>&1
+      - run: |
+          git config user.name github-actions; git config user.email actions@github.com
+          git checkout --orphan tmp-audit; git rm -rfq .; cp /tmp/a/* .
+          git add -A; git commit -qm "臨時查核輸出"; git push -f origin tmp-audit
