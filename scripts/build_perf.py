@@ -47,10 +47,11 @@ def num(v):
 
 
 def hold(v):
-    """'10.41 日曆日（平均）' → (10.41, 日曆日)；純數字 → 交易日。"""
+    """'10.41 日曆日（平均）' → (10.41, 日曆日)；純數字 → 交易日。
+    '實際34.30交易日；資金加權11.98交易日' → 取實際持有天數（資金加權只用在年化分母）。"""
     if isinstance(v, (int, float)):
         return float(v), "交易日"
-    m = re.match(r"([\d.]+)\s*(交易日|日曆日)", str(v or ""))
+    m = re.match(r"(?:實際)?\s*([\d.]+)\s*(交易日|日曆日)", str(v or ""))
     return (float(m.group(1)), m.group(2)) if m else (None, None)
 
 
