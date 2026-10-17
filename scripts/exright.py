@@ -1,11 +1,12 @@
-"""A11 大幅除權息（總表 A1）
+"""A11 大幅除權息（A11 R04，Eve 2026-10-17 複審通過）
 
 資料：上市 TWT48U_ALL、上櫃 tpex_exright_prepost（除權除息預告表）；面額取公司基本資料。
-  除權息日 T0，以 T-6 收盤 P 試算（回測用 T-1 收盤，實際進場前拿不到，會有偏差）：
-    參考價 = (P − 現金股利 + 認購價 × 現增配股率) ÷ (1 + 無償配股率 + 現增配股率)
-    幅度   = (P − 參考價) ÷ P ≥ 15%
-    稅拖曳 = (現金股利 + 無償配股率 × 面額) ÷ P ≤ 5%
-  進出場：T-5 開盤買進 → T0 收盤賣出
+  除權息日 T0，T-6 收盤後以當時已公告的股利與 T-6 收盤 P 試算：
+    幅度   = 1 − (P − C) ÷ ((1 + r) × P)（R04：同期現增當獨立事件，認股權不計入幅度與報酬）
+    稅拖曳 = (現金股利 + 無償配股率 × 面額) ÷ P
+    兩者先四捨五入到 0.01%，幅度 ≥ 15.00% 且稅拖曳 ≤ 5.00% 才入選（R01：14.9997% 算 15.00%）
+  進出場：T-5 開盤買進 → 原股 T0 收盤賣出；配股在官方上市（櫃）可賣日收盤賣出
+    （配股可賣日由 scripts/exright_delivery.py 從 TWSE LT185／TPEx 公告補上，另成一筆出場提醒）
   幅度落在 13~17%、或稅拖曳落在 4~6% → 標「接近門檻」
 
 用法：python3 scripts/exright.py；DRY_RUN=1 只印不寫；PREVIEW=1 用最新收盤試算還沒到 T-6 的事件
@@ -19,7 +20,7 @@ from calendar_signals import Cal, leg, supa
 from cash_issue import _get
 
 TPE = dt.timezone(dt.timedelta(hours=8))
-STAT = {"name": "大幅除權息", "n": 85, "win": 65.9, "p": 0.000047}
+STAT = {"name": "大幅除權息", "n": 82, "win": 72.0, "p": 0.0000041}  # R01 正式版
 DROP, DRAG = 0.15, 0.05
 
 
@@ -99,12 +100,12 @@ def main():
         p = (closes.get(t6) or (latest if preview else {})).get(e["code"])
         if p is None:
             continue  # 非普通股（ETF 等）或當天沒行情
-        if None in (e["cash"], e["stock"], e["sub"], e["sub_px"]):
-            print(f"  {e['code']} {e['name']} T0={e['t0']}：股利或認購價尚未公告，無法試算")
+        if None in (e["cash"], e["stock"]):
+            print(f"  {e['code']} {e['name']} T0={e['t0']}：股利尚未公告，無法試算")
             continue
         p = float(p)
-        ref = (p - e["cash"] + e["sub_px"] * e["sub"]) / (1 + e["stock"] + e["sub"])
-        drop = (p - ref) / p
+        # R04：同期現金增資當獨立事件，認股權不進幅度也不計報酬 → 幅度只看現金股利與無償配股
+        drop = 1 - (p - e["cash"]) / ((1 + e["stock"]) * p)
         face = fv.get(e["code"])
         if face is None:
             if e["stock"]:
@@ -113,7 +114,7 @@ def main():
             face = 10.0  # 沒有配股時面額不影響稅拖曳
         drag = (e["cash"] + e["stock"] * face) / p
         near = abs(drop - DROP) <= 0.02 or abs(drag - DRAG) <= 0.01
-        ok = drop >= DROP and drag <= DRAG
+        ok = round(drop, 4) >= DROP and round(drag, 4) <= DRAG  # R01：先四捨五入到 0.01% 再比
         tag = f"T-6 收盤 {p:g}：幅度 {drop:.1%}、稅拖曳 {drag:.1%}" + (f"（面額 {face:g}）" if face != 10 else "")
         if not ok:
             if drop >= 0.10:
@@ -122,9 +123,10 @@ def main():
         print(f"  {e['code']} {e['name']} T0={e['t0']} {tag} → A11 符合{'（接近門檻）' if near else ''}")
         rs = leg("A11", "大幅除權息", e["code"], e["name"], e["t0"].isoformat(), "long", t5, "open", e["t0"], "close", STAT)
         for x in rs:
-            x["detail"] = (("⚠ 接近門檻（回測用 T-1 收盤，結果可能翻轉）｜" if near else "") +
-                           "T-6 試算版（回測統計為 T-1 版，兩者篩選結果可能不同）｜" +
-                           f"{e['t0']:%m/%d} 除權息｜{tag}｜" + x["detail"])
+            x["detail"] = (("⚠ 接近門檻（股利若更正可能翻轉）｜" if near else "") +
+                           f"{e['t0']:%m/%d} 除權息｜{tag}｜" +
+                           (f"原股 T0 收盤賣；配股 {e['stock']:g} 股／股等官方可賣日收盤賣（公告後另推提醒）｜"
+                            if e["stock"] else "") + x["detail"])
         rows += rs
 
     if dry:

@@ -74,6 +74,12 @@ jobs:
         continue-on-error: true
         run: python3 scripts/exright.py
 
+      - name: A11 配股可賣日（LT185／櫃買公告）
+        if: steps.gate.outputs.go == '1'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: python3 scripts/exright_delivery.py
+
       - name: 日曆型策略（A01、A09、A10、009、021）
         if: steps.gate.outputs.go == '1'
         id: cal
