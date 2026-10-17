@@ -21,6 +21,12 @@ on:
 permissions:
   contents: read
 
+# cron-job.org 19:35 與 GitHub 排程 19:30 可能同時在跑：排成一個接一個，
+# 第二個跑到推播時就看得到第一個的紀錄，不會兩個同時推出主推播。
+concurrency:
+  group: daily-push
+  cancel-in-progress: false
+
 jobs:
   push:
     runs-on: ubuntu-latest
