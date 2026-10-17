@@ -28,11 +28,11 @@ jobs:
       RAW: ${{ github.event.inputs.raw }}
     steps:
       - uses: actions/checkout@v4
-      - run: python3 scripts/export_push_log.py && mv report.md /tmp/ && (mv raw.json /tmp/ 2>/dev/null || true)
+      - run: cd scripts && python3 export_push_log.py && mv report.md ledger.json /tmp/ && (mv raw.json /tmp/ 2>/dev/null || true)
       - name: 報告與原文推到暫存分支 tmp-push-export（取用後刪除）
         run: |
           git config user.name github-actions; git config user.email actions@github.com
           git checkout --orphan tmp-push-export
           git rm -rfq .
-          cp /tmp/report.md .; cp /tmp/raw.json . 2>/dev/null || true
+          cp /tmp/report.md /tmp/ledger.json .; cp /tmp/raw.json . 2>/dev/null || true
           git add -A; git commit -qm "推播週報匯出（暫存）"; git push -f origin tmp-push-export
