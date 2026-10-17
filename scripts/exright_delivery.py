@@ -29,7 +29,7 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0 Safa
 KIND = re.compile(r"增資新股|新股權利證書|權利證書.*增資股")
 DIV = re.compile(r"除權|配股|盈餘|公積|股票股利|無償|增資股|權利證書")
 EXCL = re.compile(r"現金增資|減資|員工|限制|私募|轉換|庫藏|更名|面額")
-DATE = re.compile(r"(\d{2,3})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
+DATE = re.compile(r"(\d{2,3})\s*[年/]\s*(\d{1,2})\s*[月/]\s*(\d{1,2})")  # 證交所「114年11月28日」、櫃買「114/09/02」
 
 
 def get_json(url, ref=None):
