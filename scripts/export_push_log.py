@@ -27,6 +27,10 @@ msgs = supa(f"push_messages?select=id,sent_at,mode,status,text&sent_at=gte.{sinc
 # 應推清單：主推播在執行日前一個交易日晚上送出
 cal = Cal([dt.date.fromisoformat(r["market_date"]) for r in supa("holidays?select=market_date&limit=5000")])
 last_push_day = today if now.hour >= 20 else today - dt.timedelta(days=1)
+# 推播入庫起日之前沒有紀錄可比對，不列漏推
+first = supa("push_messages?select=sent_at&order=sent_at&limit=1") or []
+log_start = dt.datetime.fromisoformat(first[0]["sent_at"].replace("Z", "+00:00")).astimezone(TPE).date() if first else today
+check_from = max(start, log_start)
 upper = cal.shift(last_push_day, 1)
 acts = supa(f"strategy_actions?select=strategy_id,company_code,company_name,role,side,act_date,act_timing"
             f"&ignored=eq.false&act_date=gt.{start.isoformat()}&act_date=lte.{upper.isoformat()}") or []
@@ -35,15 +39,17 @@ expected = []
 for a in acts:
     d = dt.date.fromisoformat(a["act_date"])
     push_day = cal.shift(d, -1)
-    if start <= push_day <= last_push_day:
+    if check_from <= push_day <= last_push_day:
         expected.append(dict(a, action=ACT[(a["role"], a["side"])]))
 
 name = f"推播紀錄_{start:%Y%m%d}～{today:%Y%m%d}"
 rows, missed = ledger(msgs, expected, name)
-report = render(msgs, start, today, now, missed=missed)
+report = render(msgs, start, today, now, missed=missed,
+                check_note=f"漏推對帳範圍：主推播日 {check_from:%m/%d}～{last_push_day:%m/%d}（推播入庫起日 {log_start:%Y-%m-%d}），"
+                           f"策略訊號應推 {len(expected)} 項、漏推 {len(missed)} 項；IPO、舊板塊沒有應推清單，只列已推項目")
 open("report.md", "w", encoding="utf-8").write(report)
 json.dump({"name": name, "columns": LEDGER_COLS, "rows": [[r[c] for c in LEDGER_COLS] for r in rows],
-           "missed": len(missed), "expected": len(expected)},
+           "missed": len(missed), "expected": len(expected), "check_from": check_from.isoformat()},
           open("ledger.json", "w", encoding="utf-8"), ensure_ascii=False)
 print("===BEGIN===")
 print(report)

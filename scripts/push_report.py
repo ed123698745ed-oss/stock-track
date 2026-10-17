@@ -25,6 +25,7 @@ INTRA_ITEM = re.compile(r"^【(\S+) ([^】]+)】(.+?) (\w+)（(.+)）$")
 WATCH = re.compile(r"^(\S.*?) (\w+)　(已連 \d+ 根漲停)$")
 MOVED = re.compile(r"改為 (\d{1,2})/(\d{1,2})")
 
+ALIAS = {"開板放空": "放空"}  # 010 盤中提醒的動作名稱
 LEDGER_COLS = ["策略", "代號", "名稱", "動作", "執行日", "時點", "狀態", "首次推播", "推播類型",
                "LINE回應", "更正", "週報"]
 
@@ -133,7 +134,7 @@ def fix_note(f, d):
     return note
 
 
-def render(messages, start, end, generated, ledger_url=None, missed=None):
+def render(messages, start, end, generated, ledger_url=None, missed=None, check_note=None):
     msgs = prepare(messages)
     days = build_days(msgs)
     out = []
@@ -148,6 +149,8 @@ def render(messages, start, end, generated, ledger_url=None, missed=None):
         w("- ⚠ 本週沒有任何推播紀錄")
     w("- 整理方式：以「要執行的日子」為單位；同一標的同一動作只列一次；補推新增的項目標「補推」，"
       "更正標在原項目；重複推送只記時間，不重列內容。訊息送出不等於成交。")
+    if check_note:
+        w(f"- {check_note}")
     if ledger_url:
         w(f"- 依策略查詢：《推播總表》{ledger_url}")
     w("")
@@ -231,7 +234,7 @@ def ledger(messages, expected=(), report_name=""):
                          "執行日": d.isoformat(), "時點": it["timing"], "狀態": status,
                          "首次推播": f"{it['sent']:%Y-%m-%d %H:%M}", "推播類型": it["src"].split(" ")[0],
                          "LINE回應": it["status"], "更正": f["detail"] if f else "", "週報": report_name})
-            pushed.add((it["strategy"], it["code"], it["action"]))
+            pushed.add((it["strategy"], it["code"], ALIAS.get(it["action"], it["action"])))
     missed = []
     for e in expected:
         k = (e["strategy_id"], e["company_code"], e["action"])
