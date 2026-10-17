@@ -130,7 +130,10 @@ def log_push(mode, text, status, today, items):
         m = supa("push_messages", "POST", {"mode": mode, "status": status, "text": text},
                  prefer="return=representation")
         mid = m[0]["id"] if m else None
-        rows = [dict(r, message_id=mid, push_date=today.isoformat(), mode=mode) for r in items]
+        # PostgREST 整批寫入要求每列欄位一致；板塊／盯盤項目沒有時點，缺的補 None（否則整批被拒、0 筆）
+        cols = ("source", "code", "name", "action", "act_date", "act_timing", "line")
+        rows = [dict({k: r.get(k) for k in cols}, message_id=mid, push_date=today.isoformat(), mode=mode)
+                for r in items]
         if rows:
             supa("push_log", "POST", rows)
         print(f"推播紀錄已寫入 {len(rows)} 項")
@@ -443,6 +446,14 @@ def main():
     today = now.astimezone(TPE).date()
     late = os.environ.get("LATE") == "1"
     problems = []
+    if not late and os.environ.get("DRY_RUN") != "1" and os.environ.get("FORCE") != "1":
+        # 同一天主推播已成功送出就不再送（GitHub 備援排程常延遲數小時，曾在 23:35／23:48 重複主推播）
+        start = dt.datetime.combine(today, dt.time(0), TPE).astimezone(dt.timezone.utc).isoformat()
+        sent, _ = safe(lambda: supa(f"push_messages?select=id&mode=eq.main&status=eq.200"
+                                    f"&sent_at=gte.{start.replace('+', '%2B')}&limit=1"))
+        if sent:
+            print("今天的主推播已成功送出，不重複推送")
+            return
 
     tmr, e1 = safe(lambda: supa("v_tomorrow?select=*"))
     if tmr:  # 舊板塊的處置、分割買賣和總表規則不同，改由 A02／A06（strategy_actions）提醒
