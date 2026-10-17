@@ -1,0 +1,18 @@
+name: 臨時查核
+on:
+  push:
+    branches: [claude/strategy-trigger-tracking-dccm6s]
+    paths: [.github/workflows/probe_split.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: TPEx 原始格式
+        run: curl -s "https://www.tpex.org.tw/www/zh-tw/bulletin/tdr?startDate=2025/08/01&endDate=2025/08/31&mkt=O&sect=&code=&response=json" | head -c 2500; echo
+      - run: TEST="7734:2025-07-29,6472:2025-08-04,6469:2023-08-11,2364:2025-08-28" python3 -u scripts/exright_delivery.py
+      - run: DRY_RUN=1 python3 -u scripts/exright_delivery.py

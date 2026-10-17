@@ -59,7 +59,7 @@ const BLOCK_SID = { disposal: "A02", buyback: "A03", msci: "A04", tw50: "A05" };
 const PENDING = {};
 // 績效和實際提醒情境有落差、仍顯示數字的說明（scripts/perf.py 同名設定）
 const NOTES = {
-  A11: "R01 正式版尚未經 Eve 複審；Eve 審前一版時指出部分股利用了舊值（大樹、淘帝、聯德等），正式版明細仍是舊值，數字可能小幅變動",
+  A11: "總表仍是 R01 正式版數字；R04 已獲 Eve 複審通過（83 筆、平均 5.10%、資金加權年化 107%），待總表同步後更新",
 };
 const SMALL_N = 30;
 async function loadPerf() {
