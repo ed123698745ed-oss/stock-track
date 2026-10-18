@@ -126,10 +126,33 @@ def build_days(msgs):
     return out
 
 
-def fix_note(f, d):
-    note = f"⚠ 已更正：{f['detail']}（{f['src']}）"
+def moved_to(f, d):
+    """更正把執行日改到別天 → 新日期；同一天（只改時點或補出場日）→ None。"""
     mv = MOVED.search(f["detail"])
-    if mv and (int(mv.group(1)), int(mv.group(2))) != (d.month, d.day):
+    if not mv:
+        return None
+    mo, dd = int(mv.group(1)), int(mv.group(2))
+    if (mo, dd) == (d.month, d.day):
+        return None
+    y = d.year + (1 if mo < d.month - 6 else -1 if mo > d.month + 6 else 0)
+    return dt.date(y, mo, dd)
+
+
+def fix_kind(f, d):
+    """更正種類：改執行日／補出場日（日期時點都沒變，只多了出場日）／已更正（其他，例如改時點）。"""
+    if moved_to(f, d):
+        return "改執行日"
+    m = re.match(r"原 (.+?) → 改為 (.+?)(｜|$)", f["detail"])
+    if m and m.group(1).strip() == m.group(2).strip() and "出場" in f["detail"]:
+        return "補出場日"
+    return "已更正"
+
+
+def fix_note(f, d):
+    kind = fix_kind(f, d)
+    label = "補出場日" if kind == "補出場日" else "已更正"
+    note = f"⚠ {label}：{f['detail']}（{f['src']}）"
+    if kind == "改執行日":
         note += "；執行日已移出本日"
     return note
 
@@ -225,15 +248,20 @@ def ledger(messages, expected=(), report_name=""):
         fixed = {(f["strategy"], f["code"], f["action"]): f for f in info["fixes"]}
         for it in info["rows"].values():
             f = fixed.get(key(it))
-            status = "已推播"
+            status, act_day, fix_txt = "已推播", d, ""
+            if f:
+                kind = fix_kind(f, d)
+                fix_txt = f["detail"]
+                if kind == "改執行日":  # 執行日欄改成更正後的日期，原推播日期留在更正欄
+                    act_day = moved_to(f, d)
+                    fix_txt = f"原推播執行日 {d:%m/%d}；{f['detail']}"
+                status = "已推播（補出場日）" if kind == "補出場日" else "已推播（已更正）"
             if it["status"] != 200:
                 status = f"⚠ LINE 回應 {it['status']}"
-            elif f:
-                status = "已推播（已更正）"
             rows.append({"策略": it["strategy"], "代號": it["code"], "名稱": it["name"], "動作": it["action"],
-                         "執行日": d.isoformat(), "時點": it["timing"], "狀態": status,
+                         "執行日": act_day.isoformat(), "時點": it["timing"], "狀態": status,
                          "首次推播": f"{it['sent']:%Y-%m-%d %H:%M}", "推播類型": it["src"].split(" ")[0],
-                         "LINE回應": it["status"], "更正": f["detail"] if f else "", "週報": report_name})
+                         "LINE回應": it["status"], "更正": fix_txt, "週報": report_name})
             pushed.add((it["strategy"], it["code"], ALIAS.get(it["action"], it["action"])))
     missed = []
     for e in expected:
