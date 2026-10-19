@@ -20,11 +20,16 @@ from calendar_signals import supa
 from cash_issue import _text, mops
 
 TPE = dt.timezone(dt.timedelta(hours=8))
-SWAP_SUBJ = re.compile(r"換發股票(?:基準日|作業計畫)|換股作業計畫|面額變更.*換發|新股票上(?:市|櫃)買賣")
+# 2026-10-19：交易所核准後的換股公告主旨是「公告本公司股票面額由「新台幣10元」變更為「新台幣X元」，公告期間…」
+#   （沛爾 8/6、仁新 8/5 都是這種），原本的字眼抓不到，上櫃案件會整個漏掉 A06 進場日。
+SWAP_SUBJ = re.compile(r"換發股票(?:基準日|作業計畫)|換股作業計畫|面額變更.*換發|新股票上(?:市|櫃)買賣"
+                       r"|股票面額由.{0,20}?變更為")
 MEET_SUBJ = re.compile(r"召開.*股東(?:臨時|常)?會")
 DATE = r"(?:民國)?\s*(\d{2,3})\s*[年/]\s*(\d{1,2})\s*[月/]\s*(\d{1,2})\s*日?"
 F_SUSPEND = re.compile(r"舊股票停止(?:交易|買賣)期間\s*[:：]\s*" + DATE)
-F_LISTING = re.compile(r"新股票上(?:市|櫃)買賣日\s*[:：]\s*" + DATE)
+# 欄位也可能寫成「(6)新股票上市買賣日及舊股票終止上市買賣日：民國115年09月07日…」或
+#   「新股票上櫃買賣日(115年09月07日)」，都取標籤後第一個日期
+F_LISTING = re.compile(r"新股票上(?:市|櫃)買賣日(?:及舊股票終止上(?:市|櫃)買賣日)?\s*[:：(（]\s*" + DATE)
 F_MEETING = re.compile(r"股東(?:臨時|常)?會召開日期\s*[:：]\s*" + DATE)
 
 
