@@ -126,7 +126,8 @@ def main():
     ann = []
     for name, fn in (("證交所 LT185", lt185), ("櫃買公告", tpex)):
         try:
-            got = fn(lo, today)
+            # 迄日放到 45 天後：LT185 的日期區間若是以「生效日」篩選，只查到今天會漏掉明天才生效的配股
+            got = fn(lo, today + dt.timedelta(days=45))
             print(f"  {name} {len(got)} 則")
             ann += [(name,) + x for x in got]
         except Exception as e:
