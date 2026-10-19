@@ -523,7 +523,7 @@ def market_problems(today, cal):
     st = read_out("market_status.json")
     if cal and cal.is_trading(today):
         if not st or st.get("d") != today.isoformat():
-            out.append("今天的行情還沒抓到，事件型策略用的是前一個交易日的資料")
+            out.append("今天的行情還沒抓到，事件型策略用的是前一個交易日的資料；A11 明天 T-5 進場的試算也做不了（T-6 收盤缺）")
         else:
             if not st.get("has_otc"):
                 out.append("上櫃行情沒抓到，014 跌停家數今天不判斷")
@@ -568,6 +568,7 @@ def main():
             next_day = None  # 休市日未公布，不硬算日期
 
     problems += market_problems(today, cal if hol else None)
+    problems += read_out("warn017.json") or []  # cash_issue.py：017 查不到認購比例
     if late:
         # 晚間補推：只推第一次推播之後才出現的「明天」策略訊號
         stg = [r for r in (stg or []) if r.get("due_label") == "明天" and not r.get("notified_at")]

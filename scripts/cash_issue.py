@@ -17,6 +17,7 @@ import datetime as dt
 import http.cookiejar
 import json
 import os
+import pathlib
 import re
 import ssl
 import time
@@ -264,6 +265,9 @@ def ratio_for(code, d, issues):
     return max(cands, key=lambda v: v["pay_end"])["ratio"] if cands else None
 
 
+WARN017 = []  # 推播要顯示的警告（daily_push 讀 out/warn017.json）
+
+
 def run017(cal, today, issues):
     period = int(os.environ.get("PERIOD017") or 3)
     anns = [a for a in list017(period) if SUBJ017.search(a[3]) and not SKIP017.search(a[3])]
@@ -286,6 +290,9 @@ def run017(cal, today, issues):
         ratio = ratio_for(code, d, issues)
         if ratio is None:
             print(f"  {code} {name} D={d}：找不到認購比例，略過")
+            if d > today:  # 還沒上市的才需要人工確認
+                WARN017.append(f"017 {name} {code} 現增新股 {d:%m/%d} 上市，但查不到原認購比例，"
+                               f"無法判斷是否 ≥146.18，請人工確認")
             continue
         if ratio < TH017:
             print(f"  {code} {name} D={d}：每仟股 {ratio:.2f} 股（未達 146.18）")
@@ -373,6 +380,12 @@ def main():
         print(f"⚠ 017 公告查詢失敗：{e}")
         if not dry:
             raise
+    try:  # 給晚上推播顯示的 017 警告
+        out = pathlib.Path(__file__).resolve().parent.parent / "out"
+        out.mkdir(exist_ok=True)
+        (out / "warn017.json").write_text(json.dumps(WARN017, ensure_ascii=False), "utf-8")
+    except Exception as e:
+        print(f"⚠ 017 警告檔寫入失敗：{e}")
     rows = [r for r in rows if r["act_date"] >= today.isoformat()]
     for r in sorted(rows, key=lambda r: r["act_date"]):
         print(f"  {r['act_date']} {r['act_timing']:5} {r['role']:5} 004 {r['company_name']}{r['company_code']}")

@@ -36,10 +36,10 @@ def main():
         sus = dt.date.fromisoformat(r["suspend_date"]) if r.get("suspend_date") else None
         if lst and lst < today - dt.timedelta(days=30):
             continue  # 早就結束的不再重算
-        if not cal.known(swap + dt.timedelta(days=10)):
-            print(f"  {r['company_code']} {r['company_name']}：休市日未公布，略過")
-            continue
         ent = cal.shift(swap, 1)
+        if not cal.known(ent):  # 進場日落在休市日未公布的年份（例：12/31 公告），等公布後再算
+            print(f"  {r['company_code']} {r['company_name']}：進場日 {ent} 所在年份休市日未公布，略過")
+            continue
         if sus and ent >= sus:
             print(f"  {r['company_code']} {r['company_name']}：公告後下一交易日 {ent} 已停止買賣（{sus} 起），無法進場，略過")
             continue
