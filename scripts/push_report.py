@@ -24,6 +24,10 @@ FIX = re.compile(r"^【更正】(.+?)｜(.+?) (\w+) (\S+)$")
 INTRA_ITEM = re.compile(r"^【(\S+) ([^】]+)】(.+?) (\w+)（(.+)）$")
 WATCH = re.compile(r"^(\S.*?) (\w+)　(已連 \d+ 根漲停)$")
 MOVED = re.compile(r"改為 (\d{1,2})/(\d{1,2})")
+# 2026-10-20 起的分組排版：【策略】→ ◆ 時點動作 N 檔 → ・名稱 代號
+GROUP = re.compile(r"^【(\S+) ([^】]+)】$")
+SUB = re.compile(r"^◆ (開盤|收盤)?(\S+?)(?:（[^）]*）)? \d+ 檔")
+ITEM2 = re.compile(r"^・(.+?) (\w+)(?:　(.*))?$")
 
 ALIAS = {"開板放空": "放空"}  # 010 盤中提醒的動作名稱
 LEDGER_COLS = ["策略", "代號", "名稱", "動作", "執行日", "時點", "狀態", "首次推播", "推播類型",
@@ -46,6 +50,7 @@ def target_day(text, sent):
 def parse(text):
     """回傳 (items, fixes, watch)。item: strategy, name, code, action, timing, detail。"""
     items, fixes, watch = [], [], []
+    grp, sub, common = None, None, ""
     lines = text.splitlines()
     i = 0
     while i < len(lines):
@@ -70,6 +75,14 @@ def parse(text):
             detail = "；".join(x for x in rest if not x.startswith("平均"))
             items.append({"strategy": strat, "name": m.group(3), "code": m.group(4), "action": m.group(1),
                           "timing": m.group(2) or "", "detail": detail})
+        elif m := GROUP.match(ln):
+            grp, sub, common = m.group(1), None, ""
+        elif (m := SUB.match(ln)) and grp:
+            sub, common = (m.group(1) or "", m.group(2)), "；".join(body)
+        elif (m := ITEM2.match(ln)) and grp and sub:
+            detail = "；".join(x for x in [m.group(3) or ""] + body + [common] if x)
+            items.append({"strategy": grp, "name": m.group(1), "code": m.group(2), "action": sub[1],
+                          "timing": sub[0], "detail": detail})
         elif m := WATCH.match(ln):
             watch.append({"name": m.group(1), "code": m.group(2), "detail": m.group(3)})
         i = j if j > i + 1 else i + 1

@@ -11,6 +11,7 @@
          DRY_RUN=1 只印不推；CAL_OUTCOME=日曆策略那一步的結果（success/failure）
 """
 import re
+from collections import OrderedDict
 import datetime as dt
 import json
 import os
@@ -141,17 +142,18 @@ def log_push(mode, text, status, today, items):
         print(f"⚠ 推播紀錄寫入失敗（sql/004 是否已執行？）：{e}")
 
 
-def log_items(text, tmr, stg, watch, next_day):
+def log_items(text, shown, watch, next_day):
+    ids = {id(r) for r in shown}
     out = []
-    for r in stg or []:
+    for r in [x for x in shown if "strategy_id" in x]:
         ln = strategy_line(r)
-        if r.get("due_label") == "明天" and ln in text:
+        if r.get("due_label") == "明天" and id(r) in ids:
             out.append({"source": r["strategy_id"], "code": r.get("company_code"), "name": r.get("company_name"),
                         "action": r.get("action"), "act_date": r.get("act_date"),
                         "act_timing": r.get("act_timing"), "line": ln})
-    for r in tmr or []:
+    for r in [x for x in shown if "strategy_id" not in x]:
         ln = block_line(r)
-        if r.get("due_label") == "明天" and ln in text:
+        if r.get("due_label") == "明天":
             out.append({"source": (r.get("block") or "板塊").split("｜")[0], "code": r.get("company_code"),
                         "name": r.get("company_name"), "action": r.get("action"),
                         "act_date": next_day.isoformat() if next_day else None, "line": ln})
@@ -241,15 +243,106 @@ def board_key(r):
     return "tmr:" + hashlib.md5(block_line(r).encode()).hexdigest()[:16]
 
 
+# ---------------- 排版：同策略放一起，同策略內依「時點＋動作」分組 ----------------
+ACT_ORDER = {"賣出": 0, "回補": 1, "買進": 2, "放空": 3}
+TIMING_ORDER = {"開盤": 0, "收盤": 1}
+BLOCK_TIMING = re.compile(r"^(開盤|收盤)(買進|賣出|放空|回補)$")
+
+
+def _w(s):
+    """手機上的顯示寬度：中文 1、半形 0.5。"""
+    return sum(0.5 if ord(c) < 0x2E80 else 1 for c in s)
+
+
+def _entry(r, kind):
+    """把一列（策略訊號或舊板塊）轉成排版用的資料。"""
+    if kind == "S":
+        sid = r["strategy_id"]
+        title = f"{sid} {r['strategy_name']}" + (
+            "" if r["variant"] == r["company_name"] + r["company_code"] else f"・{r['variant']}")
+        stat = perf.summary(sid, r.get("variant"))
+        detail = r.get("detail") or ""
+        if stat:
+            detail = "｜".join(x for x in OLD_STAT.sub("", detail).split("｜") if x.strip())
+        frags = []
+        if r.get("pair_date"):
+            pair = "出場" if r["role"] == "entry" else "進場"
+            frags.append(f"{pair} {md(r['pair_date'])} {TIMING.get(r.get('pair_timing'))}")
+        frags += [x.strip() for x in detail.split("｜") if x.strip()]
+        return {"g": ("S", sid, r.get("variant")), "title": title,
+                "stat": stat or "績效：總表未提供", "note": perf.NOTES.get(sid) if stat else None,
+                "timing": TIMING.get(r.get("act_timing")), "action": r["action"], "exit": r["role"] == "exit",
+                "name": r["company_name"], "code": r["company_code"], "frags": frags, "row": r}
+    code = r.get("block_code")
+    sid = perf.BLOCK_SID.get(code)
+    title = f"{sid} {r.get('block') or ''}".strip() if sid else (r.get("block") or "其他")
+    stat = None
+    if r.get("act_kind") in ("buy", "sell"):
+        stat = perf.PENDING.get(code) or (perf.summary(sid) or "績效：總表未提供" if sid else None)
+    frags = [x.strip() for x in (r.get("detail") or "").split("　") if x.strip()]
+    timing = None
+    if frags and (m := BLOCK_TIMING.match(frags[0])):
+        timing, frags = m.group(1), frags[1:]
+    frags = [re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", x) for x in frags]
+    action = r.get("action") or "注意"
+    return {"g": ("B", code), "title": title, "stat": stat, "note": None, "timing": timing,
+            "action": action, "exit": bool(re.search(r"賣出|回補", action)),
+            "name": r.get("company_name") or "", "code": r.get("company_code") or "", "frags": frags, "row": r}
+
+
+def render_items(tmr, stg):
+    """回傳 (行列表, 實際列出的原始列)。
+    【策略】一行績效 → ◆ 時點＋動作 N 檔 → 同組共同條件一行 → 每檔一行（個別說明接在後面或下一行）。"""
+    ents = [_entry(r, "B") for r in (tmr or [])] + [_entry(r, "S") for r in (stg or [])]
+    groups = OrderedDict()
+    for e in ents:
+        groups.setdefault(e["g"], []).append(e)
+
+    def gorder(es):
+        return (min(TIMING_ORDER.get(e["timing"], 2) for e in es), es[0]["title"])
+
+    out = []
+    for es in sorted(groups.values(), key=gorder):
+        out += ["", f"【{es[0]['title']}】"]
+        if es[0]["stat"]:
+            out.append(es[0]["stat"])
+        if es[0]["note"]:
+            out.append("※" + es[0]["note"])
+        subs = OrderedDict()
+        for e in es:
+            subs.setdefault((e["timing"], e["action"]), []).append(e)
+        for (timing, action), xs in sorted(subs.items(), key=lambda kv: (
+                TIMING_ORDER.get(kv[0][0], 2), ACT_ORDER.get(kv[0][1], 9), kv[0][1])):
+            when = f"{timing}{action}" if timing in TIMING_ORDER else (
+                f"{action}（{timing}）" if timing else action)
+            out.append(f"◆ {when} {len(xs)} 檔" + ("（若有持倉）" if xs[0]["exit"] else ""))
+            common = [f for f in xs[0]["frags"] if all(f in x["frags"] for x in xs)] if len(xs) > 1 else []
+            if common:
+                out.append("　" + "｜".join(common))
+            for x in xs:
+                rest = "｜".join(f for f in x["frags"] if f not in common)
+                head = f"・{x['name']} {x['code']}".rstrip()
+                if rest and _w(head + "　" + rest) <= 21:
+                    out.append(f"{head}　{rest}")
+                else:
+                    out.append(head)
+                    if rest:
+                        out.append("　　" + rest)
+    return out, [e["row"] for e in ents]
+
+
 def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep=None, chg=None):
+    """回傳 (訊息文字, 有列進訊息的原始列)。"""
     head_day = md(next_day) if next_day else "下一個交易日"
     if late:
         out = [f"補充提醒｜{head_day}（稍晚公布的資料）"]
         out += [f"⚠ {p}" for p in problems]
+        shown = []
         if tmr or stg:
-            out += ["", "▍新增"] + [block_line(r) for r in (tmr or [])] + [strategy_line(r) for r in stg]
+            lines, shown = render_items(tmr, stg)
+            out += ["", "▍新增"] + lines
         out += change_lines(chg)
-        return fit("\n".join(out + ["", site(next_day)]))
+        return fit("\n".join(out + ["", site(next_day)])), shown
     out = [f"交易提醒｜{head_day} 要做的事"]
 
     if run:
@@ -261,16 +354,14 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
     for p in problems:
         out.append(f"⚠ {p}")
 
-    items = [(0, r.get("sort_key") or 0, block_line(r)) for r in (tmr or [])
-             if r.get("due_label") == "明天"]
-    items += [(1, (r.get("act_timing") != "open", r["strategy_id"]), strategy_line(r))
-              for r in (stg or []) if r.get("due_label") == "明天"]
+    t_rows = sorted((r for r in (tmr or []) if r.get("due_label") == "明天"), key=lambda r: r.get("sort_key") or 0)
+    s_rows = [r for r in (stg or []) if r.get("due_label") == "明天"]
+    shown = []
     out.append("")
-    if items:
-        out.append(f"▍明天 {head_day}　{len(items)} 筆")
-        # 既有板塊照 sort_key、策略照「開盤先、收盤後」，兩組各自排序
-        out += [x[2] for x in sorted((i for i in items if i[0] == 0), key=lambda i: i[1])]
-        out += [x[2] for x in sorted((i for i in items if i[0] == 1), key=lambda i: i[1])]
+    if t_rows or s_rows:
+        out.append(f"▍明天 {head_day}　{len(t_rows) + len(s_rows)} 筆")
+        lines, shown = render_items(t_rows, s_rows)
+        out += lines
     elif tmr is None and stg is None:
         out.append("無法讀取待辦清單，請直接開網站確認。")
     else:
@@ -282,7 +373,7 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
 
     out += ["", site(next_day)]
 
-    return fit("\n".join(out))
+    return fit("\n".join(out)), shown
 
 
 def site(day):
@@ -457,7 +548,8 @@ def main():
 
     tmr, e1 = safe(lambda: supa("v_tomorrow?select=*"))
     if tmr:  # 舊板塊的處置、分割買賣和總表規則不同，改由 A02／A06（strategy_actions）提醒
-        tmr = [r for r in tmr if not old_trade(r)]
+        # IPO（申購、抽籤、掛牌、開標…）Ed 2026-10-19 指示先不推播；網站照常顯示
+        tmr = [r for r in tmr if not old_trade(r) and r.get("block_code") != "ipo"]
     if e1:
         problems.append(f"既有板塊讀取失敗 {e1}")
     stg, e2 = safe(lambda: supa("v_strategy_actions?select=*"))
@@ -491,10 +583,10 @@ def main():
                    ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME", "DISPOSAL_OUTCOME", "SPLIT_OUTCOME")):
                 sys.exit(1)  # 警告稍早已推過；仍讓 Actions 顯示紅燈
             return
-        text = compose(now, tmr, stg, None, next_day, problems, late=True, chg=chg)
+        text, shown = compose(now, tmr, stg, None, next_day, problems, late=True, chg=chg)
     else:
         chg = changes(today)
-        text = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
+        text, shown = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
                        prep=index_prep(cal if hol else None, today), chg=chg)
     print(text)
     if os.environ.get("DRY_RUN") == "1":
@@ -504,18 +596,19 @@ def main():
         print("\nLINE 回應", status)
         done_chg = [c for c in chg if c[1] in text]
         log_push("late" if late else "main", text, status, today,
-                 log_items(text, tmr, stg, None if late else read_out("watch010.json"), next_day)
+                 log_items(text, shown, None if late else read_out("watch010.json"), next_day)
                  + [{"source": r["strategy_id"], "code": r["company_code"], "name": r["company_name"],
                      "action": r["action"], "act_date": r["act_date"], "act_timing": r.get("act_timing"),
                      "line": ln} for _, ln, r in done_chg])
+        shown_ids = {id(r) for r in shown}  # 有列進訊息的才標記（訊息不截尾，分批全部送出）
         sent_rows = [r for r in (stg or []) if r.get("due_label") == "明天" and r.get("id")
-                     and strategy_line(r) in text]  # 被截斷沒送出的不標記，補推會再送
+                     and id(r) in shown_ids]
         ids = [str(r["id"]) for r in sent_rows]
         if ids:
             safe(lambda: supa(f"strategy_actions?id=in.({','.join(ids)})", "PATCH",
                               {"notified_at": now.isoformat()}))
         keys = [{"d": today.isoformat(), "key": board_key(r)} for r in (tmr or [])
-                if r.get("due_label") == "明天" and block_line(r) in text]
+                if r.get("due_label") == "明天" and id(r) in shown_ids]
         keys += [{"d": today.isoformat(), "key": warn_key(p)} for p in problems]
         # 記下每筆推出去的日期，之後日期改了或作廢才分得出「更正／取消」
         keys += [{"d": today.isoformat(), "key": sent_key(r, now)} for r in sent_rows]
