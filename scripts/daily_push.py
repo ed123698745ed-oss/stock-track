@@ -125,6 +125,37 @@ def index_prep(cal, today):
     return out
 
 
+def msci_prep(cal, today):
+    """A04（Ed 2026-10-19 選方案 B）：MSCI 季度調整台灣公布日的前一晚先提醒。
+    calendar 的 msci announce 是 MSCI 官方（美東）公布日；台灣隔天清晨才看到名單，
+    A04 回測的「公布日」＝台灣看到名單那天（例：2025/11/5 美東 → 2025/11/6），所以台灣公布日＝美東日期的下一個交易日。"""
+    if not cal:
+        return []
+    nxt = cal.shift(today, 1)
+    try:
+        rows = supa("calendar?select=strategy_code,kind,event_date&strategy_code=eq.msci"
+                    f"&event_date=gte.{(today - dt.timedelta(days=7)).isoformat()}"
+                    f"&event_date=lte.{(today + dt.timedelta(days=120)).isoformat()}&order=event_date")
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        us = dt.date.fromisoformat(r["event_date"])
+        if r["kind"] != "announce" or not cal.known(us + dt.timedelta(days=10)):
+            continue
+        tw = cal.shift(us, 1)
+        if tw != nxt:
+            continue
+        eff = next((dt.date.fromisoformat(x["event_date"]) for x in rows
+                    if x["kind"] == "effective" and x["event_date"] > tw.isoformat()), None)
+        out += ["", "▍提前準備（A04 MSCI 季度調整）",
+                f"MSCI 美東 {md(us)} 公布，台灣明天 {md(tw)} 清晨看到名單",
+                f"　新增成分股 → 明天收盤買進" + (f"，生效日 {md(eff)} 收盤賣" if eff else "，生效日請對照公告"),
+                "　名單出來後請到網站「指數調整」填入新增股",
+                "　" + (perf.summary("A04") or "績效：總表未提供")]
+    return out
+
+
 def log_push(mode, text, status, today, items):
     """推播紀錄：整則訊息＋每個項目一筆。寫入失敗只印警告，不影響推播。"""
     try:
@@ -588,7 +619,7 @@ def main():
     else:
         chg = changes(today)
         text, shown = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
-                       prep=index_prep(cal if hol else None, today), chg=chg)
+                       prep=index_prep(cal if hol else None, today) + msci_prep(cal if hol else None, today), chg=chg)
     print(text)
     if os.environ.get("DRY_RUN") == "1":
         print("\nDRY_RUN：不推送")
