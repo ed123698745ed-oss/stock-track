@@ -664,6 +664,8 @@ function renderStrategyPlan(rows, err, target) {
 }
 
 // ---------- 近期行事曆 ----------
+// calendar 的 MSCI 公布日是美東日期；台灣隔天清晨才看到名單，A04 回測的公布日是台灣那天（行事曆表唯讀，顯示端修正標題）
+const MSCI_US = r => r.strategy_code === "msci" && r.kind === "announce";
 function renderCalendar(rows) {
   const box = $("calendar");
   const open = rows.filter(r => !r.done);
@@ -680,8 +682,8 @@ function renderCalendar(rows) {
     <div class="card blkline ${soon ? "soon" : ""}" style="--c:${c}">
       <span class="tag ${soon ? "warn" : ""}" style="${soon ? "" : "color:var(--dim)"}">${when}</span>
       <span class="tag blk" style="--c:${c}">${esc((BLOCKS[r.strategy_code] || {}).name || r.strategy_code || "")}</span>
-      <div class="name" style="font-size:16px">${esc(r.title)}</div>
-      <div class="meta">${fmt(r.event_date)}</div>
+      <div class="name" style="font-size:16px">${esc(MSCI_US(r) ? "MSCI 公布調整名單（美東日期）" : r.title)}</div>
+      <div class="meta">${fmt(r.event_date)}${MSCI_US(r) ? "｜台灣隔天清晨看到名單 → 台灣公布日收盤買（A04），前一晚推播會提醒" : ""}</div>
       ${r.detail ? `<div class="meta">${esc(r.detail)}</div>` : ""}
       <div class="row">
         <label class="chk"><input type="checkbox" data-t="calendar" data-f="done"
