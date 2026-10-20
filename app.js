@@ -468,6 +468,85 @@ function boardCard(r) {
     </div>`;
 }
 
+// ---------- 分組顯示（Ed 2026-10-20：與 LINE 推播相同，同策略放一起、買進賣出分開）----------
+const ACT_ORD = { "賣出": 0, "回補": 1, "買進": 2, "放空": 3 };
+const T_ORD = { "開盤": 0, "收盤": 1, "盤中": 2 };
+const BLOCK_TIMING = /^(開盤|收盤)(買進|賣出|放空|回補)$/;
+const splitFr = (s, sep) => String(s || "").split(sep).map(x => x.trim()).filter(Boolean);
+
+function stgEntry(r) {
+  const s = perfOf(r.strategy_id, r.variant);
+  const v = stgVar(r);
+  return { g: `S|${r.strategy_id}|${r.variant}`, title: `${r.strategy_id} ${r.strategy_name}${v ? "・" + v : ""}`,
+    color: BLOCKS.strategy.color, s, stat: true, note: s && NOTES[r.strategy_id],
+    timing: timingOf(r.act_timing), action: stgAction(r), kind: r.role,
+    cls: (r.role === "entry") === (r.side === "long") ? "buy" : "sell", exit: r.role === "exit",
+    name: r.company_name, code: r.company_code,
+    frags: [stgPair(r), ...splitFr(cleanDetail(r.detail, !!s), "｜")].filter(Boolean),
+    memo: r.note, ctl: noteBlock("strategy_actions", r) };
+}
+function boardEntry(r) {
+  const sid = BLOCK_SID[r.block_code];
+  const isTrade = ["buy", "sell"].includes(r.act_kind);
+  let frags = splitFr(r.detail, "　").map(x => x.replace(/承銷價 (0\.0|0|None)(?=[^\d.]|$)/, "承銷價 未定")), timing = "";
+  const m = frags.length && frags[0].match(BLOCK_TIMING);
+  if (m) { timing = m[1]; frags = frags.slice(1); }
+  return { g: `B|${r.block_code}`, title: `${sid && isTrade ? sid + " " : ""}${r.block || ""}`,
+    color: blkColor(r.block_code), s: sid && isTrade && !PENDING[r.block_code] ? perfOf(sid) : null,
+    stat: !!(sid && isTrade), pending: isTrade && PENDING[r.block_code],
+    timing, action: r.action || "注意", kind: boardKind(r),
+    cls: r.act_kind === "buy" ? "buy" : (r.act_kind === "sell" ? "sell" : ""), exit: /賣出|回補/.test(r.action || ""),
+    name: r.company_name || "", code: r.company_code, frags, memo: r.note,
+    ctl: noteBlock(r.src_table, { id: r.src_id, checked: r.checked, note: r.note }) };
+}
+function watchEntry(w) {
+  return { g: "W", title: "010 連續漲停開板反轉・盯盤", color: "var(--warn)", s: perfOf("010"), stat: true,
+    hint: "條件未成立：收盤沒鎖漲停才成立 → 收盤放空、下一交易日收盤回補（13:05 盤中會再提醒）",
+    timing: "盤中", action: "觀察", kind: "watch", cls: "warn", exit: false,
+    name: w.name || "", code: w.code, frags: splitFr(w.line, "｜"), ctl: "" };
+}
+
+function groupHtml(es) {
+  const e0 = es[0];
+  const subs = new Map();
+  es.forEach(e => { const k = e.timing + "|" + e.action; if (!subs.has(k)) subs.set(k, []); subs.get(k).push(e); });
+  const order = [...subs.values()].sort((a, b) =>
+    (T_ORD[a[0].timing] ?? 3) - (T_ORD[b[0].timing] ?? 3) ||
+    (ACT_ORD[a[0].action] ?? 9) - (ACT_ORD[b[0].action] ?? 9) || a[0].action.localeCompare(b[0].action));
+  const body = order.map(xs => {
+    const x0 = xs[0];
+    const common = xs.length > 1 ? x0.frags.filter(f => xs.every(x => x.frags.includes(f))) : [];
+    const when = x0.timing in T_ORD && x0.timing !== "盤中" ? `${x0.action}・${x0.timing}`
+      : (x0.timing ? `${x0.action}・${x0.timing}` : x0.action);
+    return `<div class="sub"><span class="tag ${x0.cls || "warn"}">${esc(when)}</span>
+        <span class="cnt">${xs.length} 檔${x0.exit ? "・若有持倉" : ""}</span></div>
+      ${common.length ? `<div class="meta">${esc(common.join("｜"))}</div>` : ""}
+      <div class="li">${xs.map(x => {
+        const rest = x.frags.filter(f => !common.includes(f)).join("｜");
+        return `<div class="lr"><div class="ln">${esc(x.name)} <span class="code">${esc(x.code)}</span>
+            ${rest ? `<div class="meta">${esc(rest)}</div>` : ""}</div>
+          ${x.ctl ? `<details class="ctl"><summary>${x.memo ? "📝 " + esc(x.memo) : "備註・忽略"}</summary>${x.ctl}</details>` : ""}</div>`;
+      }).join("")}</div>`;
+  }).join("");
+  return `
+    <div class="card blkline" style="--c:${e0.color}">
+      <span class="tag blk" style="--c:${e0.color}">${esc(e0.title)}</span>
+      ${e0.pending ? `<div class="hist">${esc(e0.pending)}</div>` : (e0.stat ? m4(e0.s) : "")}
+      ${e0.note ? `<div class="meta">※ ${esc(e0.note)}</div>` : ""}
+      ${e0.hint ? `<div class="meta">${esc(e0.hint)}</div>` : ""}
+      ${body}
+    </div>`;
+}
+
+function groupedHtml(ents) {
+  const groups = new Map();
+  ents.forEach(e => { if (!groups.has(e.g)) groups.set(e.g, []); groups.get(e.g).push(e); });
+  return [...groups.values()].sort((a, b) =>
+    (a[0].kind === "watch") - (b[0].kind === "watch") ||
+    Math.min(...a.map(e => T_ORD[e.timing] ?? 3)) - Math.min(...b.map(e => T_ORD[e.timing] ?? 3)) ||
+    a[0].title.localeCompare(b[0].title)).map(groupHtml).join("");
+}
+
 // 舊板塊的處置、分割買賣和總表規則不同，改看 A02／A06（strategy_actions）；與 daily_push.old_trade 一致
 const OLD_DISPOSAL = r => (r.block_code === "disposal" && r.src_table === "signals")
   || (r.block_code === "split" && ["buy", "sell"].includes(r.act_kind));
@@ -484,12 +563,10 @@ function renderTrade(target, auto, board, stg, err, holErr) {
   // 既有板塊（v_tomorrow）只有「今天／明天／未處理」三組，對不上目標日就不顯示
   const bLabel = target === TODAY ? "今天" : (target === nt ? "明天" : null);
   const items = [
-    ...board.filter(r => bLabel && r.due_label === bLabel && !OLD_DISPOSAL(r))
-      .map(r => ({ kind: boardKind(r), t: 0, k: r.sort_key || 0, html: boardCard(r) })),
-    ...stg.filter(r => r.act_date === target)
-      .map(r => ({ kind: r.role, t: r.act_timing === "open" ? 1 : 2, k: r.strategy_id, html: stgCard(r) })),
-    ...(WATCH || []).map(w => ({ kind: "watch", t: 3, k: w.code, html: watchCard(w) })),
-  ].sort((a, b) => a.t - b.t || String(a.k).localeCompare(String(b.k)));
+    ...board.filter(r => bLabel && r.due_label === bLabel && !OLD_DISPOSAL(r)).map(boardEntry),
+    ...stg.filter(r => r.act_date === target).map(stgEntry),
+    ...(WATCH || []).map(watchEntry),
+  ];
   navCount("top", items.length);
 
   const notes = [];
@@ -505,7 +582,7 @@ function renderTrade(target, auto, board, stg, err, holErr) {
     `<div class="flt" id="flt">${[["all", "全部"], ["entry", "進場"], ["exit", "出場"], ["watch", "觀察"]].map(([k, l]) =>
       `<button data-f="${k}" class="${FILTER === k ? "on" : ""}">${l} ${
         k === "all" ? items.length : items.filter(i => i.kind === k).length}</button>`).join("")}</div>` +
-    (shown.length ? shown.map(i => i.html).join("")
+    (shown.length ? groupedHtml(shown)
       : `<div class="empty">${err ? "讀取失敗，無法判斷有沒有訊號。" :
           `${fmt(target)} 沒有${FILTER === "all" ? "要進出場的部位" : KIND[FILTER] + "項目"}。`}</div>`);
   box.querySelectorAll("#flt button").forEach(b => b.onclick = () => {
