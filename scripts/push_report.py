@@ -78,7 +78,7 @@ def parse(text):
         elif m := GROUP.match(ln):
             grp, sub, common = m.group(1), None, ""
         elif (m := SUB.match(ln)) and grp:
-            sub, common = (m.group(1) or "", m.group(2)), "；".join(body)
+            sub, common = (m.group(1) or ("盤中" if INTRA.search(text) else ""), m.group(2)), "；".join(body)
         elif (m := ITEM2.match(ln)) and grp and sub:
             detail = "；".join(x for x in [m.group(3) or ""] + body + [common] if x)
             items.append({"strategy": grp, "name": m.group(1), "code": m.group(2), "action": sub[1],
