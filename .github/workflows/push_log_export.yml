@@ -26,9 +26,25 @@ jobs:
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       DAYS: ${{ github.event.inputs.days }}
       RAW: ${{ github.event.inputs.raw }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - run: cd scripts && python3 export_push_log.py && mv report.md ledger.json /tmp/ && (mv raw.json /tmp/ 2>/dev/null || true)
+      - run: |
+          cd scripts && python3 - <<'PY'
+          import json, os, urllib.request
+          h = {"Authorization": "Bearer " + os.environ["LINE_CHANNEL_ACCESS_TOKEN"].strip()}
+          out = {}
+          for k, u in (("quota", "https://api.line.me/v2/bot/message/quota"),
+                       ("consumption", "https://api.line.me/v2/bot/message/quota/consumption"),
+                       ("bot", "https://api.line.me/v2/bot/info")):
+              try:
+                  out[k] = json.loads(urllib.request.urlopen(urllib.request.Request(u, headers=h), timeout=20).read())
+              except Exception as e:
+                  out[k] = str(e)
+          out.get("bot", {}).pop("userId", None) if isinstance(out.get("bot"), dict) else None
+          json.dump(out, open("/tmp/raw.json", "w"), ensure_ascii=False)
+          PY
+          echo '# quota' > /tmp/report.md; echo '{}' > /tmp/ledger.json
       - name: 報告與原文推到暫存分支 tmp-push-export（取用後刪除）
         run: |
           git config user.name github-actions; git config user.email actions@github.com
