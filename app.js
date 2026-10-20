@@ -506,6 +506,15 @@ function watchEntry(w) {
     name: w.name || "", code: w.code, frags: splitFr(w.line, "｜"), ctl: "" };
 }
 
+// 分組卡用的精簡績效列：四指標一行小字，版面讓給標的
+function m4c(s) {
+  if (!s) return `<div class="m4c">績效：總表未提供</div>`;
+  const small = s.n != null && s.n < SMALL_N;
+  return `<div class="m4c"><span>平均 <b>${pct(s.avg, true)}</b></span><span>持有 <b>${holdTxt(s)}</b></span>
+    <span>年化 <b>${pct(s.ann)}</b></span><span>凱利 <b>${kellyTxt(s)}</b></span>
+    <span>n=${s.n ?? "未提供"}${small ? ` <b style="color:var(--warn)">⚠ 小樣本</b>` : ""}</span></div>`;
+}
+
 function groupHtml(es) {
   const e0 = es[0];
   const subs = new Map();
@@ -531,7 +540,7 @@ function groupHtml(es) {
   return `
     <div class="card blkline" style="--c:${e0.color}">
       <span class="tag blk" style="--c:${e0.color}">${esc(e0.title)}</span>
-      ${e0.pending ? `<div class="hist">${esc(e0.pending)}</div>` : (e0.stat ? m4(e0.s) : "")}
+      ${e0.pending ? `<div class="hist">${esc(e0.pending)}</div>` : (e0.stat ? m4c(e0.s) : "")}
       ${e0.note ? `<div class="meta">※ ${esc(e0.note)}</div>` : ""}
       ${e0.hint ? `<div class="meta">${esc(e0.hint)}</div>` : ""}
       ${body}
