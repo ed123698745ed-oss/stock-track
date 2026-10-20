@@ -117,8 +117,10 @@ def main():
 
     # A08
     if pct is not None and pct <= A08_WARN and (dry or once(today, "A08")):
-        alerts.append(f"【A08 大盤-5%】加權目前 {pct:+.2f}%\n　收盤 ≤ −5% → 收盤買進（加權指數），持有 5 個交易日後收盤賣出\n"
-                      f"　{perf.summary('A08') or '績效：總表未提供'}")
+        alerts.append(("A08", "\n".join([
+            "【A08 大盤-5%】", perf.summary("A08") or "績效：總表未提供",
+            f"◆ 加權目前 {pct:+.2f}%",
+            "　收盤 ≤ −5% → 收盤買進加權指數，持有 5 個交易日後收盤賣出"])))
 
     # 014：每次都掃全市場跌停家數（正式策略沒有大盤跌幅條件）
     if True:
@@ -134,14 +136,18 @@ def main():
             prev = dt.date.fromisoformat(recent[0]["act_date"])
             in_window = len(cal.days(prev, today)) - 1 < C014_GAP
         if n >= WARN_014 and not in_window and (dry or once(today, "014")):
-            alerts.append(f"【014 跌停群聚】盤中跌停 {n} 家\n　收盤 ≥ 100 家 → 收盤買進（加權指數），持有 5 日／15 日\n"
-                          f"　5日：{perf.summary('014', '持有5日') or '未提供'}\n"
-                          f"　15日：{perf.summary('014', '持有15日') or '未提供'}")
+            alerts.append(("014", "\n".join([
+                "【014 跌停群聚】",
+                f"持有5日 {perf.summary('014', '持有5日') or '未提供'}",
+                f"持有15日 {perf.summary('014', '持有15日') or '未提供'}",
+                f"◆ 盤中跌停 {n} 家",
+                "　收盤 ≥ 100 家 → 收盤買進加權指數，持有 5 日／15 日"])))
 
     # 010：昨天已連 ≥ 4 根漲停的股票
     days = supa("market_days?select=d,stocks&order=d.desc&limit=12")
     days = [d for d in sorted(days, key=lambda r: r["d"]) if d["d"] < today.isoformat()]
     watch = watch010(days, cal)
+    o010 = []
     if watch:
         mk = {c: s.get("m") for c, s in days[-1]["stocks"].items()}
         q = {x.get("c"): x for x in mis([f"{'tse' if mk.get(w['code']) == 'L' else 'otc'}_{w['code']}.tw"
@@ -155,16 +161,23 @@ def main():
             print(f"010 盯盤 {w['name']}{w['code']} 連{w['streak']} 現價 {px} 漲停 {x.get('u')} "
                   f"{'鎖漲停' if locked else '未鎖（報價暫缺）' if px is None else '未鎖'}")
             if not locked and (dry or once(today, f"010:{w['code']}")):
-                now_txt = f"目前 {px:g}" if px is not None else "盤中報價暫缺（請自行看盤）"
                 u = f(x.get("u"))
-                alerts.append(f"【010 開板放空】{w['name']} {w['code']}（已連 {w['streak']} 根漲停）\n"
-                              f"　{now_txt}、漲停 {u if u is None else format(u, 'g')}，未鎖漲停\n"
-                              f"　收盤仍沒漲停 → 收盤放空，下一交易日收盤回補（先確認券源）\n"
-                              f"　{perf.summary('010') or '績效：總表未提供'}")
+                now_txt = f"現 {px:g}／停 {u:g}" if px is not None and u else "報價暫缺，請自行看盤"
+                o010.append((f"010:{w['code']}", f"・{w['name']} {w['code']}　連{w['streak']}｜{now_txt}"))
 
+    # 排版與晚上推播相同：【策略】→ 一行績效 → ◆ 動作 N 檔 → 共同條件一行 → 每檔一行
+    if o010:
+        alerts += [(k, ln) for k, ln in o010]
     if not alerts:
         print("沒有需要提醒的事"); return
-    text = f"⚡ 盤中提醒 {now:%m/%d %H:%M}\n\n" + "\n\n".join(alerts) + "\n\n最後以收盤為準，晚上推播會記錄是否成立。"
+    blocks = [a for k, a in alerts if not k.startswith("010:")]
+    if o010:
+        blocks.append("\n".join([
+            "【010 開板放空】", perf.summary("010") or "績效：總表未提供",
+            f"◆ 開板放空 {len(o010)} 檔（盤中未鎖漲停）",
+            "　收盤仍沒漲停 → 收盤放空，下一交易日收盤回補（先確認券源）"] + [ln for _, ln in o010]))
+    text = (f"⚡ 盤中提醒 {now:%m/%d %H:%M}\n\n" + "\n\n".join(blocks)
+            + "\n\n以收盤為準，晚上推播會記錄是否成立。")
     print(text)
     if dry:
         print("\nDRY_RUN：不推送")
@@ -176,7 +189,7 @@ def main():
         log_push("intraday", text, status, today,
                  [{"source": k.split(":")[0], "code": (k.split(":") + [None])[1], "action": "盤中提醒",
                    "act_date": today.isoformat(), "act_timing": "close", "line": a}
-                  for k, a in zip(_PENDING, alerts)])
+                  for k, a in alerts if k in _PENDING])
 
 
 if __name__ == "__main__":
