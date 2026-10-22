@@ -176,6 +176,7 @@ function ensureSections() {
     .dsp .dbar{width:44px;height:6px;border-radius:99px;background:var(--line);overflow:hidden;flex:none}
     .dsp .dbar i{display:block;height:100%}
     .dsp .chip{font-size:10.5px;padding:2px 6px}
+    .dsp .full{font-size:10px;color:var(--dim);margin-top:2px}
 
     /* 處置進度條 */
     .bar{height:6px;border-radius:99px;background:var(--line);margin-top:8px;overflow:hidden}
@@ -802,7 +803,7 @@ function renderCalendar(rows) {
 // ---------- 處置股 ----------
 let DSP = [];
 // 策略一覽 A02 卡片下的處置中總表：股票／次數／處置期間／進度／撮合／付款
-// 付款欄只標「圈存」：第 2 次以上處置（或官方公告全部預收）；不用圈存＝空白
+// 付款欄依官方公告原文：全部預收或全額交割＝圈存；大單門檻與不用圈存＝空白
 function dspTable() {
   const C = BLOCKS.disposal.color;
   const now = DSP.filter(r => r.grp === "處置中");
@@ -811,13 +812,11 @@ function dspTable() {
     String(a.start_date).localeCompare(String(b.start_date)) ||
     String(a.company_code).localeCompare(String(b.company_code)));
   if (!rows.length) return `<div class="dsp"><div class="meta">目前沒有處置中的股票。</div></div>`;
-  // 第幾次：後端 cum_count 優先；沒有就用同代號較早、30 天內開始的處置推回
-  const nth = r => {
-    if (Number(r.cum_count) > 0) return Number(r.cum_count);
-    const lim = addDays(r.start_date, -45);
-    return 1 + DSP.filter(x => x.company_code === r.company_code &&
-      x.start_date < r.start_date && x.start_date >= lim).length;
-  };
+  // 第幾次：依作業要點第 6 條「最近三十個營業日內」第幾次處置（公告的「累計」是歷史累計，不是這個）
+  // 用處置起日互推：較早處置的起日到這次起日 ≤ 30 個營業日就算；休市日表讀不到時退回 42 個日曆天
+  const within30 = (a, b) => HOL ? tradingGap(a, b) <= 30 : b <= addDays(a, 42);
+  const nth = r => 1 + DSP.filter(x => x.company_code === r.company_code &&
+    x.start_date < r.start_date && within30(x.start_date, r.start_date)).length;
   const md = d => { const t = new Date(d + "T00:00:00"); return `${t.getMonth() + 1}/${t.getDate()}`; };
   const tr = r => {
     const n = nth(r);
@@ -833,7 +832,7 @@ function dspTable() {
       <td class="num">${md(r.start_date)}–${md(r.end_date)}</td>
       <td><div class="prog">${prog}</div></td>
       <td class="num r">${esc(r.match_mode || "–")}</td>
-      <td>${n >= 2 || r.prepay === "全部" ? `<span class="chip hot">圈存</span>` : ""}</td>
+      <td>${r.prepay === "全部" || r.prepay === "全額交割" ? `<span class="chip hot">圈存</span>${r.prepay === "全額交割" ? `<div class="full">全額交割</div>` : ""}` : ""}</td>
     </tr>`;
   };
   return `<div class="dsp">
@@ -880,7 +879,7 @@ function renderDisposals(rows) {
     if (r.match_mode) tags.push(`<span class="chip on">${esc(r.match_mode)}</span>`);
     // 圈存只標「全部預收」那種（官方公告原文判定）。
     // 大單門檻那種對實際下單影響不大，依 Ed 要求不顯示。
-    if (r.prepay === "全部") tags.push(`<span class="chip hot">圈存</span>`);
+    if (r.prepay === "全部" || r.prepay === "全額交割") tags.push(`<span class="chip hot">圈存${r.prepay === "全額交割" ? "・全額交割" : ""}</span>`);
     if (r.has_futures) tags.push(`<span class="chip fut">期貨${
       r.futures_contract ? " " + esc(r.futures_contract) : ""}</span>`);
     if (r.has_mini) tags.push(`<span class="chip fut">小型期${
