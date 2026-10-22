@@ -169,6 +169,7 @@ function ensureSections() {
     .dsp td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
     .dsp tr:last-child td{border-bottom:none}
     .dsp .r{text-align:right}
+    .dsp td:first-child,.dsp th:first-child{position:sticky;left:0;background:var(--card);z-index:1}
     .dsp .num{font-variant-numeric:tabular-nums}
     .dsp td.hot{color:var(--buy);font-weight:700}
     .dsp .prog{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:11.5px}
@@ -801,7 +802,7 @@ function renderCalendar(rows) {
 // ---------- 處置股 ----------
 let DSP = [];
 // 策略一覽 A02 卡片下的處置中總表：股票／次數／處置期間／進度／撮合／付款
-// 付款欄只標「圈存」（全部預收）；不用圈存＝空白
+// 付款欄只標「圈存」：第 2 次以上處置（或官方公告全部預收）；不用圈存＝空白
 function dspTable() {
   const C = BLOCKS.disposal.color;
   const now = DSP.filter(r => r.grp === "處置中");
@@ -832,7 +833,7 @@ function dspTable() {
       <td class="num">${md(r.start_date)}–${md(r.end_date)}</td>
       <td><div class="prog">${prog}</div></td>
       <td class="num r">${esc(r.match_mode || "–")}</td>
-      <td>${r.prepay === "全部" ? `<span class="chip hot">圈存</span>` : ""}</td>
+      <td>${n >= 2 || r.prepay === "全部" ? `<span class="chip hot">圈存</span>` : ""}</td>
     </tr>`;
   };
   return `<div class="dsp">
