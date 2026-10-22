@@ -160,6 +160,22 @@ function ensureSections() {
     .edit label{font-size:12px;color:var(--dim);display:block;margin-bottom:3px}
     .edit input{padding:8px 10px;font-size:15px}
 
+    /* 策略一覽 A02 處置中總表 */
+    .dsp{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+    .dscroll{overflow-x:auto;margin-top:6px}
+    .dsp table{width:100%;border-collapse:collapse;font-size:12.5px;white-space:nowrap}
+    .dsp th{text-align:left;font-weight:600;color:var(--dim);font-size:11.5px;
+      padding:5px 6px;border-bottom:1px solid var(--line)}
+    .dsp td{padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+    .dsp tr:last-child td{border-bottom:none}
+    .dsp .r{text-align:right}
+    .dsp .num{font-variant-numeric:tabular-nums}
+    .dsp td.hot{color:var(--buy);font-weight:700}
+    .dsp .prog{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:11.5px}
+    .dsp .dbar{width:44px;height:6px;border-radius:99px;background:var(--line);overflow:hidden;flex:none}
+    .dsp .dbar i{display:block;height:100%}
+    .dsp .chip{font-size:10.5px;padding:2px 6px}
+
     /* 處置進度條 */
     .bar{height:6px;border-radius:99px;background:var(--line);margin-top:8px;overflow:hidden}
     .bar i{display:block;height:100%;background:#f59e0b}
@@ -388,6 +404,7 @@ async function load() {
   renderTrade(target, auto, tmr.data || [], sDay.data || [], sDay.error,
     !!hol.error || !(hol.data || []).length);  // 讀不到或空表都要講，不能當成沒有休市日
   renderStrategyPlan(sPlan.data || [], sDay.error || sPlan.error, target);
+  DSP = dsp.data || [];
   renderPerfTab();
   renderCalendar(CAL);
   renderDisposals((dsp.data || []).filter(r => r.grp !== "出關觀察"));  // Ed 不看出關
@@ -676,6 +693,7 @@ function renderPerfTab() {
       ${sc.length > 1 ? `<span class="tag" style="color:var(--dim)">${sc.length} 個情境</span>` : ""}
       <div class="name">${esc(sid)} ${esc(st.name)}</div>
       ${sc.map(([v, s]) => scenarioHtml(sid, st, v, s, false)).join("")}
+      ${sid === BLOCK_SID.disposal ? dspTable() : ""}
     </div>`;
   };
 
@@ -781,6 +799,52 @@ function renderCalendar(rows) {
 }
 
 // ---------- 處置股 ----------
+let DSP = [];
+// 策略一覽 A02 卡片下的處置中總表：股票／次數／處置期間／進度／撮合／付款
+// 付款欄只標「圈存」（全部預收）；不用圈存＝空白
+function dspTable() {
+  const C = BLOCKS.disposal.color;
+  const now = DSP.filter(r => r.grp === "處置中");
+  const soon = DSP.filter(r => r.grp === "即將處置");
+  const rows = [...now, ...soon].sort((a, b) =>
+    String(a.start_date).localeCompare(String(b.start_date)) ||
+    String(a.company_code).localeCompare(String(b.company_code)));
+  if (!rows.length) return `<div class="dsp"><div class="meta">目前沒有處置中的股票。</div></div>`;
+  // 第幾次：後端 cum_count 優先；沒有就用同代號較早、30 天內開始的處置推回
+  const nth = r => {
+    if (Number(r.cum_count) > 0) return Number(r.cum_count);
+    const lim = addDays(r.start_date, -45);
+    return 1 + DSP.filter(x => x.company_code === r.company_code &&
+      x.start_date < r.start_date && x.start_date >= lim).length;
+  };
+  const md = d => { const t = new Date(d + "T00:00:00"); return `${t.getMonth() + 1}/${t.getDate()}`; };
+  const tr = r => {
+    const n = nth(r);
+    let prog;
+    if (r.grp === "處置中" && r.day_no && r.total_days) {
+      const pct = Math.min(100, Math.round(r.day_no / r.total_days * 100));
+      prog = `<div class="dbar"><i style="width:${pct}%;background:${C}"></i></div>
+        <span>第 ${r.day_no}/${r.total_days} 天</span>`;
+    } else prog = `<span>${md(r.start_date)} 開始</span>`;
+    return `<tr>
+      <td><b>${esc(r.company_name)}</b> <span class="code">${esc(r.company_code)}</span></td>
+      <td class="${n >= 2 ? "hot" : ""}">第 ${n} 次</td>
+      <td class="num">${md(r.start_date)}–${md(r.end_date)}</td>
+      <td><div class="prog">${prog}</div></td>
+      <td class="num r">${esc(r.match_mode || "–")}</td>
+      <td>${r.prepay === "全部" ? `<span class="chip hot">圈存</span>` : ""}</td>
+    </tr>`;
+  };
+  return `<div class="dsp">
+    <div class="meta"><b style="color:var(--ink)">處置中</b>　${now.length} 檔處置中${
+      soon.length ? `、${soon.length} 檔已公布還沒開始` : ""}</div>
+    <div class="dscroll"><table>
+      <thead><tr><th>股票</th><th>次數</th><th>處置期間</th><th>進度</th><th class="r">撮合</th><th>付款</th></tr></thead>
+      <tbody>${rows.map(tr).join("")}</tbody>
+    </table></div>
+  </div>`;
+}
+
 function renderDisposals(rows) {
   const box = $("disposals");
   const C = BLOCKS.disposal.color;
