@@ -566,6 +566,16 @@ def market_problems(today, cal):
 def main():
     now = dt.datetime.now(dt.timezone.utc)
     today = now.astimezone(TPE).date()
+    # 以 workflow 開始執行時的台北日期為準：跑到午夜後才推，也不會被算成隔天的主推播
+    rd = (os.environ.get("RUN_DAY") or "").strip()
+    if rd:
+        try:
+            run_day = dt.date.fromisoformat(rd)
+            if run_day != today:
+                print(f"執行開始日 {run_day}，送出時已是 {today}：以 {run_day} 為今天")
+                today = run_day
+        except ValueError:
+            print(f"RUN_DAY 格式不對（{rd!r}），改用目前日期")
     late = os.environ.get("LATE") == "1"
     problems = []
     if not late and os.environ.get("DRY_RUN") != "1" and os.environ.get("FORCE") != "1":
