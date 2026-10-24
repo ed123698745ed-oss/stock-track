@@ -170,7 +170,7 @@ def fix_note(f, d):
     return note
 
 
-def render(messages, start, end, generated, ledger_url=None, missed=None, check_note=None):
+def render(messages, start, end, generated, ledger_url=None, missed=None, check_note=None, push_alerts=None):
     msgs = prepare(messages)
     days = build_days(msgs)
     out = []
@@ -190,6 +190,12 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
     if ledger_url:
         w(f"- 依策略查詢：《推播總表》{ledger_url}")
     w("")
+    if push_alerts:
+        w("## ⚠ 主推播時間異常\n")
+        w("主推播應在交易日晚上 19:00～23:59 送出；以下情況當晚的新訊號、盯盤清單、警示可能沒推出去，請人工確認。\n")
+        for a in push_alerts:
+            w(f"- {a}")
+        w("")
     if missed:
         w("## ⚠ 漏推（策略訊號有、推播沒有）\n")
         w("| 策略 | 標的 | 動作 | 執行日 | 時點 |\n|---|---|---|---|---|")
