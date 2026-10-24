@@ -40,11 +40,18 @@ jobs:
 
       # GitHub 自帶排程有時延遲好幾小時（曾在隔天清晨 05:41 才跑）。
       # 排程觸發時只在台北 19:00~23:59 執行，太晚就整個略過；cron-job.org 手動觸發不受限。
+      # 2026-10-25：10/22 的 19:30 排程延遲到 23:59 才開始，推播在 10/23 00:03 送出，
+      # 被當成 10/23 的主推播，導致 10/23 晚上的主推播被防重複規則擋掉。
+      # 修正：①記下開始執行時的台北日期（RUN_DAY），推播一律以它為「今天」；
+      #       ②主推播排程（19:30）過了 23:00 才開始就略過，避免跑到午夜後。補推排程維持 19～23 點。
       - name: 時間檢查
         id: gate
         run: |
           h=$(TZ=Asia/Taipei date +%H)
-          if [ "${{ github.event_name }}" = "schedule" ] && { [ "$h" -lt 19 ] || [ "$h" -gt 23 ]; }; then
+          echo "run_day=$(TZ=Asia/Taipei date +%F)" >> "$GITHUB_OUTPUT"
+          last=23
+          [ "${{ github.event.schedule }}" = "30 11 * * 1-5" ] && last=22
+          if [ "${{ github.event_name }}" = "schedule" ] && { [ "$h" -lt 19 ] || [ "$h" -gt "$last" ]; }; then
             echo "排程延遲到台北 ${h} 點才執行，略過"; echo "go=0" >> "$GITHUB_OUTPUT"
           else
             echo "go=1" >> "$GITHUB_OUTPUT"
@@ -125,5 +132,6 @@ jobs:
           DISPOSAL_OUTCOME: ${{ steps.disposal.outcome }}
           SPLIT_OUTCOME: ${{ steps.split.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+          RUN_DAY: ${{ steps.gate.outputs.run_day }}
           LATE: ${{ (github.event.schedule == '7 13 * * 1-5' || github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py
