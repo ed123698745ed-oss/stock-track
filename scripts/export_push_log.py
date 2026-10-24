@@ -42,18 +42,36 @@ for a in acts:
     if check_from <= push_day <= last_push_day:
         expected.append(dict(a, action=ACT[(a["role"], a["side"])]))
 
+# 主推播時間檢查（2026-10-25 加）：
+# ⑦ 主推播送出時間不在台北 19:00～23:59（例：排程延遲跨午夜，10/23 00:03 那則）
+# ⑧ 交易日當晚 19:00～23:59 沒有任何一則成功的主推播
+W = "一二三四五六日"
+push_alerts = []
+mains = [(dt.datetime.fromisoformat(m["sent_at"].replace("Z", "+00:00")).astimezone(TPE), m)
+         for m in msgs if m.get("mode") == "main"]
+for t, m in mains:
+    if t.hour < 19:
+        push_alerts.append(f"{t:%m/%d %H:%M} 送出主推播，不在 19:00～23:59（LINE {m.get('status')}）；"
+                           f"可能是前一晚排程延遲跨過午夜，會佔掉 {t:%m/%d} 當晚的主推播")
+ok_days = {t.date() for t, m in mains if t.hour >= 19 and str(m.get("status")) == "200"}
+d = check_from
+while d <= last_push_day:
+    if cal.is_trading(d) and d not in ok_days:
+        push_alerts.append(f"{d:%m/%d}({W[d.weekday()]}) 是交易日，當晚 19:00～23:59 沒有成功的主推播")
+    d += dt.timedelta(days=1)
+
 name = f"推播紀錄_{start:%Y%m%d}～{today:%Y%m%d}"
 rows, missed = ledger(msgs, expected, name)
-report = render(msgs, start, today, now, missed=missed,
+report = render(msgs, start, today, now, missed=missed, push_alerts=push_alerts,
                 check_note=f"漏推對帳範圍：主推播日 {check_from:%m/%d}～{last_push_day:%m/%d}（推播入庫起日 {log_start:%Y-%m-%d}），"
                            f"策略訊號應推 {len(expected)} 項、漏推 {len(missed)} 項；IPO、舊板塊沒有應推清單，只列已推項目")
 open("report.md", "w", encoding="utf-8").write(report)
 json.dump({"name": name, "columns": LEDGER_COLS, "rows": [[r[c] for c in LEDGER_COLS] for r in rows],
-           "missed": len(missed), "expected": len(expected), "check_from": check_from.isoformat()},
+           "missed": len(missed), "expected": len(expected), "push_alerts": push_alerts, "check_from": check_from.isoformat()},
           open("ledger.json", "w", encoding="utf-8"), ensure_ascii=False)
 print("===BEGIN===")
 print(report)
 print("===END===")
-print(f"總表 {len(rows)} 列；應推 {len(expected)} 項，漏推 {len(missed)} 項")
+print(f"總表 {len(rows)} 列；應推 {len(expected)} 項，漏推 {len(missed)} 項；主推播時間異常 {len(push_alerts)} 項")
 if os.environ.get("RAW") == "1":
     json.dump({"messages": msgs, "expected": expected}, open("raw.json", "w", encoding="utf-8"), ensure_ascii=False)
