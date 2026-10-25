@@ -81,9 +81,11 @@ def main():
     if dry:
         print(f"DRY_RUN：不寫入（{len(out)} 列）")
         return
-    if out:
-        supa("strategy_actions?on_conflict=strategy_id,variant,company_code,cycle,role",
-             "POST", out, prefer="resolution=merge-duplicates,return=minimal")
+    # PostgREST 批次寫入要求每列欄位相同：有 ignored（休市順延恢復）與沒有的分兩批
+    for batch in ([r for r in out if "ignored" not in r], [r for r in out if "ignored" in r]):
+        if batch:
+            supa("strategy_actions?on_conflict=strategy_id,variant,company_code,cycle,role",
+                 "POST", batch, prefer="resolution=merge-duplicates,return=minimal")
     for code, cyc in skipped:  # 之前寫過、但不是 5／7 日的處置：未來的提醒作廢
         supa(f"strategy_actions?strategy_id=eq.{SID}&company_code=eq.{code}&cycle=eq.{cyc}"
              f"&act_date=gte.{today.isoformat()}", "PATCH", {"ignored": True})
