@@ -73,6 +73,53 @@ def old_trade(r):
             or (r.get("block_code") == "split" and r.get("act_kind") in ("buy", "sell")))
 
 
+OLD_NAMES = {"buyback": "庫藏股", "msci": "MSCI調整", "tw50": "0050調整"}
+
+
+def buyback_summary(ev):
+    """庫藏股摘要：原始資料列有 20 格（價格、期間都拆成兩格）時依原始格重組，避免把價格上限誤標成期間。"""
+    c = ((ev.get("raw") or {}).get("cols")) or []
+    dre = r"\d{2,3}/\d{1,2}/\d{1,2}"
+    if len(c) >= 11 and re.fullmatch(r"[\d,.]+", c[8] or "x") and re.fullmatch(dre, c[9] or "") and re.fullmatch(dre, c[10] or ""):
+        purpose = {"1": "轉讓員工", "2": "股權轉換", "3": "維護信用並銷除"}.get(c[4], c[4])
+        n = int(re.sub(r"[^\d]", "", c[6]) or 0)
+        sh = f"{n / 10**4:,.0f} 萬股" if n >= 10**4 else f"{n:,} 股"
+        return f"目的 {purpose}・預定 {sh}・價格 {c[7]}～{c[8]}・期間 {c[9]}～{c[10]}"
+    return ev.get("summary") or ""
+
+
+def old_board_for(day):
+    """直接從 signals 取「day 要做」的舊板塊買賣列（處置、分割已改由 A02／A06，不取）。
+    v_tomorrow 以「下一個交易日」當今天：週末、連假時會把「明天」算成下下個交易日，漏掉真正的下一個交易日
+    （2026-10-25 漢測 7856 10/27 開盤買進沒推出）。非交易日改用這裡補。"""
+    rows = supa("signals?select=id,strategy_code,entry_date,exit_date,entry_timing,exit_timing,status,ignored,"
+                "events(company_code,company_name,summary,raw)"
+                f"&or=(entry_date.eq.{day},exit_date.eq.{day})&ignored=is.false") or []
+    out = []
+    for s in rows:
+        code = s.get("strategy_code")
+        if code not in OLD_NAMES:
+            continue
+        ev = s.get("events") or {}
+        tm = {"open": "開盤", "close": "收盤"}
+        if s.get("entry_date") == day and s.get("status") in ("pending", None):
+            ex = dt.date.fromisoformat(s["exit_date"]) if s.get("exit_date") else None
+            detail = f"{tm.get(s.get('entry_timing'), '')}買進　{buyback_summary(ev)}".strip()
+            if ex:
+                detail += f"　預計出場 {ex:%m/%d}"
+            act, kind = "買進", "buy"
+        elif s.get("exit_date") == day and s.get("status") != "closed":
+            ent = dt.date.fromisoformat(s["entry_date"]) if s.get("entry_date") else None
+            detail = f"{tm.get(s.get('exit_timing'), '')}賣出" + (f"　進場日 {ent:%m/%d}" if ent else "")
+            act, kind = "賣出", "sell"
+        else:
+            continue
+        out.append({"src_table": "signals", "src_id": s["id"], "block": OLD_NAMES[code], "block_code": code,
+                    "action": act, "act_kind": kind, "due_label": "明天", "company_code": ev.get("company_code"),
+                    "company_name": ev.get("company_name"), "detail": detail, "event_date": day, "sort_key": 1})
+    return out
+
+
 def block_line(r):
     name = f"{r.get('company_name') or ''} {r.get('company_code') or ''}".strip()
     lines = [f"【{r.get('action') or '注意'}】{name}"]
@@ -608,6 +655,13 @@ def main():
         if next_day.year not in cal.years:
             next_day = None  # 休市日未公布，不硬算日期
 
+    if hol and next_day and not cal.is_trading(today) and tmr is not None:
+        # 非交易日：舊板塊的「明天」不可靠，改以 next_day 從 signals 重建（處置／分割本來就濾掉）
+        extra, e3 = safe(lambda: old_board_for(next_day.isoformat()))
+        if e3:
+            problems.append(f"舊板塊（庫藏股等）{md(next_day)} 待辦讀取失敗，請開網站確認：{e3}")
+        else:
+            tmr = [r for r in tmr if r.get("due_label") != "明天" or r.get("block_code") not in OLD_NAMES] + (extra or [])
     problems += market_problems(today, cal if hol else None)
     problems += read_out("warn017.json") or []  # cash_issue.py：017 查不到認購比例
     if late:
