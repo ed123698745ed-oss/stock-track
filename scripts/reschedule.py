@@ -57,27 +57,34 @@ def plan(rows, old_cal, new_cal, added, today):
     return out
 
 
-def main():
+def run(added, hol, today, dry=False):
+    """hol：已含 added 的休市日清單。回傳 plan() 的變動；dry=True 只算不寫。"""
     from calendar_signals import Cal, supa
-    added = [dt.date.fromisoformat(a) for a in sys.argv[1:]]
-    if not added:
-        raise SystemExit("用法：reschedule.py YYYY-MM-DD …")
-    TPE = dt.timezone(dt.timedelta(hours=8))
-    today = dt.datetime.now(TPE).date()
-    hol = [dt.date.fromisoformat(r["market_date"]) for r in supa("holidays?select=market_date&limit=5000")]
     old_cal = Cal([h for h in hol if h not in set(added)])
     new_cal = Cal(hol)  # 最後建立的 Cal 決定 KNOWN_YEARS
     since = (min(added) - dt.timedelta(days=60)).isoformat()
     rows = supa("strategy_actions?select=id,strategy_id,variant,company_code,company_name,cycle,role,act_date,pair_date"
                 f"&ignored=is.false&act_date=gte.{since}&limit=5000") or []
     changes = plan(rows, old_cal, new_cal, added, today)
+    if not dry:
+        for rid, patch, _ in changes:
+            supa(f"strategy_actions?id=eq.{rid}", "PATCH", patch)
+    return changes
+
+
+def main():
+    from calendar_signals import supa
+    added = [dt.date.fromisoformat(a) for a in sys.argv[1:]]
+    if not added:
+        raise SystemExit("用法：reschedule.py YYYY-MM-DD …")
+    TPE = dt.timezone(dt.timedelta(hours=8))
+    today = dt.datetime.now(TPE).date()
+    hol = [dt.date.fromisoformat(r["market_date"]) for r in supa("holidays?select=market_date&limit=5000")]
+    hol = sorted(set(hol) | set(added))
+    changes = run(added, hol, today, dry=os.environ.get("DRY_RUN") == "1")
     for note in dict.fromkeys(n for _, _, n in changes):
         print("  " + note)
-    print(f"新增休市日 {', '.join(map(str, added))}：改期 {len(changes)} 列")
-    if os.environ.get("DRY_RUN") == "1":
-        return
-    for rid, patch, _ in changes:
-        supa(f"strategy_actions?id=eq.{rid}", "PATCH", patch)
+    print(f"新增休市日 {', '.join(map(str, added))}：改期 {len(changes)} 列" + ("（DRY_RUN，未寫入）" if os.environ.get("DRY_RUN") == "1" else ""))
 
 
 if __name__ == "__main__":

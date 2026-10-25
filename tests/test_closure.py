@@ -2,7 +2,7 @@
 
 不連網、不碰資料庫。PR 時由 .github/workflows/tests.yml 自動跑：python3 tests/test_closure.py
 涵蓋：統一改期（持有型／錨定型）、A02 處置迄日順延、019 出場重算、週報主推播時間檢查、
-推播執行日判斷、舊板塊週末摘要。
+推播執行日判斷、舊板塊週末摘要、臨時休市自動偵測。
 """
 import datetime as dt
 import os
@@ -127,10 +127,29 @@ def t_buyback_summary():
           "目的 轉讓員工・預定 30 萬股・價格 3,700.00～4,300.00・期間 115/10/23～115/12/22")
 
 
+def t_closure_watch():
+    """臨時休市偵測：證交所標題解析"""
+    import closure_watch as cw
+    rows = [[1, "東擎科技股份有限公司股票自115年10月27日開始上市買賣", "115年10月22日"],
+            [2, "臺灣證券交易所集中交易市場115年10月23日休市一天", "115年10月22日"],
+            [3, "泰山企業股份有限公司(泰山，公司代號：1218)上市普通股自115年8月13日起暫停交易", "115年10月22日"],
+            [4, "臺灣證券交易所集中交易市場115年7月10日休市一天", "115年07月09日"],
+            [5, "臺灣證券交易所集中交易市場115年10月24日上午休市", "115年10月22日"]]
+    auto, manual = cw.scan(rows, D("2026-10-22"), set(BASE))
+    check("偵測 10/23 休市一天", [d for d, _ in auto], [D("2026-10-23")])
+    check("半日休市只提醒、個股暫停交易不提醒", manual, ["臺灣證券交易所集中交易市場115年10月24日上午休市"])
+    auto, _ = cw.scan(rows, D("2026-10-22"), set(BASE) | {CLOSE})
+    check("已登錄的不重複處理", auto, [])
+    auto, _ = cw.scan(rows, D("2026-10-25"), set(BASE))
+    check("休市日已過不處理", auto, [])
+    msg = cw.message(CLOSE, rows[1][1], ["004 達勝 7419：出場 2026-10-23→2026-10-27"], D("2026-10-22"))
+    check("通知訊息日期格式", "・004 達勝 7419：出場 10/23→10/27" in msg and "10/23（五）" in msg, True)
+
+
 if __name__ == "__main__":
     os.environ.setdefault("SUPABASE_URL", "http://x")
     os.environ.setdefault("SUPABASE_SERVICE_KEY", "x")
-    for f in (t_reschedule, t_disposal, t_export_alerts, t_buyback_summary):
+    for f in (t_reschedule, t_disposal, t_export_alerts, t_buyback_summary, t_closure_watch):
         print(f"\n— {f.__doc__.splitlines()[0] if f.__doc__ else f.__name__}")
         f()
     print()

@@ -1,0 +1,37 @@
+name: 臨時休市偵測
+
+# 2026-10-23 颱風休市沒人登錄 → 訊號日期全錯。改成每 30 分鐘盯證交所最新消息，
+# 公告「集中交易市場 X 月 X 日休市一天」就自動登錄休市日、訊號改期、LINE 推「臨時休市通知」。
+# 颱風假多在前一天傍晚～晚上公告（週日晚上也可能宣布週一），所以每天都跑；清晨再補看兩次。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只印不寫、不推 LINE（填 1）'
+        required: false
+        default: '1'
+  schedule:
+    - cron: '*/30 9-15 * * *'   # 台北 17:00～23:30
+    - cron: '0 22,23 * * *'     # 台北 06:00、07:00
+
+permissions:
+  contents: read
+
+concurrency:
+  group: closure-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONUNBUFFERED: '1'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd scripts && python3 closure_watch.py

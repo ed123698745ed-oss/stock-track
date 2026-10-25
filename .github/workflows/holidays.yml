@@ -10,6 +10,7 @@ jobs:
   holidays:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: 抓 TWSE 休市日並重算訊號日期
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -84,6 +85,20 @@ jobs:
           if bad:
               raise SystemExit(f"休市日數量不在合理範圍(15~40)：{bad}，判斷資料格式可能有變，不寫入")
 
+          # 這次新加入、且在今天前後 60 天內的休市日（例：證交所事後補進颱風假）→ 下一步要幫策略訊號改期
+          import datetime as _dt
+          _today = _dt.date.today()
+          _have = {h["market_date"] for h in (supa("holidays?select=market_date&limit=5000", "GET") or [])}
+          _new = [r["market_date"] for r in rows if r["market_date"] not in _have
+                  and abs((_dt.date.fromisoformat(r["market_date"]) - _today).days) <= 60
+                  and _dt.date.fromisoformat(r["market_date"]).weekday() < 5]
+          open("/tmp/new_holidays", "w").write(" ".join(_new))
+          print(f"新加入的近期休市日：{_new or '無'}")
+
+          # 已在表裡的日期不覆蓋：臨時休市（自動／手動登錄）名稱含「臨時／颱風」，A02 處置迄日順延要靠它判斷
+          rows = [r for r in rows if r["market_date"] not in _have]
+          print(f"要新寫入 {len(rows)} 天（已存在的不覆蓋）")
+
           # 分批寫入，避免一次太多觸發 504
           for i in range(0, len(rows), 10):
               batch = rows[i:i+10]
@@ -106,3 +121,12 @@ jobs:
           for r in (nxt or []):
               print("   ", r)
           PYEOF
+
+      # 新版策略訊號（strategy_actions）依新加入的休市日改期（同「新增休市日」）
+      - name: 策略訊號改期
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          D=$(cat /tmp/new_holidays 2>/dev/null || true)
+          if [ -n "$D" ]; then cd scripts && python3 reschedule.py $D; else echo "沒有新加入的近期休市日，略過改期"; fi

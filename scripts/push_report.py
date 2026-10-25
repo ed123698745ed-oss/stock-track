@@ -14,7 +14,7 @@ from collections import OrderedDict
 
 TPE = dt.timezone(dt.timedelta(hours=8))
 WD = "一二三四五六日"
-MODE = {"main": "主推播", "late": "補推", "intraday": "盤中提醒"}
+MODE = {"main": "主推播", "late": "補推", "intraday": "盤中提醒", "closure": "臨時休市通知", "closure_check": "休市待確認"}
 TIMING = {"open": "開盤", "close": "收盤"}
 
 HEAD = re.compile(r"(?:交易提醒|補充提醒)｜(\d{1,2})/(\d{1,2})")
