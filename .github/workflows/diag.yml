@@ -1,0 +1,31 @@
+name: 唯讀診斷（訊號日期）
+
+# 只讀不寫：列出期間內 strategy_actions、signals、disposals，核對休市順延等日期問題。
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: '起日（例 2026-10-15，空白＝今天前 10 天）'
+        required: false
+        default: ''
+      to:
+        description: '迄日（空白＝今天後 14 天）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONUNBUFFERED: '1'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      FROM: ${{ github.event.inputs.from }}
+      TO: ${{ github.event.inputs.to }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd scripts && python3 diag_dates.py
