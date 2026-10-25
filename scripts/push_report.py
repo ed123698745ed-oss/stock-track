@@ -192,7 +192,7 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
     w("")
     if push_alerts:
         w("## ⚠ 主推播時間異常\n")
-        w("主推播應在交易日晚上 19:00～23:59 送出；以下情況當晚的新訊號、盯盤清單、警示可能沒推出去，請人工確認。\n")
+        w("⑦ 主推播送出時間不在 19:00～23:59；⑧ 某交易日開盤前沒收到成功的主推播（依目標交易日判斷，休市日不算）。請人工確認內容與日期。\n")
         for a in push_alerts:
             w(f"- {a}")
         w("")

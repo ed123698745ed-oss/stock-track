@@ -141,6 +141,10 @@ jobs:
                       def cell(k):
                           return td[k].strip() if len(td) > k else ""
                       shifted = nhead and len(td) == nhead + 1
+                      # 表頭沒抓到或格數對不上時，看第 8 格：是純數字（價格上限）就是拆格版型，
+                      # 期間一定含日期分隔（/ 或 ~）。避免把價格上限誤標成「期間」（漢測 7856 曾發生）。
+                      if not shifted and re.fullmatch(r"[\d,.]+", cell(8) or "x"):
+                          shifted = True
                       parts = []
                       p = cell(4)
                       if p:

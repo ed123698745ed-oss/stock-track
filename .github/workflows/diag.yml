@@ -12,6 +12,14 @@ on:
         description: '迄日（空白＝今天後 14 天）'
         required: false
         default: ''
+      ex_from:
+        description: 'A11 核對：除權息日起（例 2026-10-28，空白＝不查）'
+        required: false
+        default: ''
+      ex_to:
+        description: 'A11 核對：除權息日迄'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -26,6 +34,8 @@ jobs:
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       FROM: ${{ github.event.inputs.from }}
       TO: ${{ github.event.inputs.to }}
+      EX_FROM: ${{ github.event.inputs.ex_from }}
+      EX_TO: ${{ github.event.inputs.ex_to }}
     steps:
       - uses: actions/checkout@v4
       - run: cd scripts && python3 diag_dates.py | tee /tmp/diag.txt
