@@ -42,22 +42,29 @@ for a in acts:
     if check_from <= push_day <= last_push_day:
         expected.append(dict(a, action=ACT[(a["role"], a["side"])]))
 
-# 主推播時間檢查（2026-10-25 加）：
-# ⑦ 主推播送出時間不在台北 19:00～23:59（例：排程延遲跨午夜，10/23 00:03 那則）
-# ⑧ 交易日當晚 19:00～23:59 沒有任何一則成功的主推播
+# 主推播時間檢查（2026-10-25 加；同日依 Ema 覆核改以「目標交易日」判斷）
+# ⑦ 主推播送出時間不在台北 19:00～23:59（排程延遲跨午夜、手動補推等），列出供人工確認
+# ⑧ 每個交易日 T：前一交易日 P 的 19:00 起、到 T 當天 08:30 前，要有一則成功（LINE 200）的主推播。
+#    中間遇休市／連假也照這個區間判（例：10/22 晚～10/27 早上之間任何一天晚上補推都算）。
+#    交易日以 holidays 表為準；臨時休市要先登錄，否則會誤判。
 W = "一二三四五六日"
 push_alerts = []
 mains = [(dt.datetime.fromisoformat(m["sent_at"].replace("Z", "+00:00")).astimezone(TPE), m)
          for m in msgs if m.get("mode") == "main"]
 for t, m in mains:
     if t.hour < 19:
-        push_alerts.append(f"{t:%m/%d %H:%M} 送出主推播，不在 19:00～23:59（LINE {m.get('status')}）；"
-                           f"可能是前一晚排程延遲跨過午夜，會佔掉 {t:%m/%d} 當晚的主推播")
-ok_days = {t.date() for t, m in mains if t.hour >= 19 and str(m.get("status")) == "200"}
+        push_alerts.append(f"⑦ {t:%m/%d %H:%M} 送出主推播，不在 19:00～23:59（LINE {m.get('status')}）；"
+                           f"排程延遲跨午夜或手動補推，請確認內容與目標日")
+ok_times = [t for t, m in mains if str(m.get("status")) == "200"]
 d = check_from
 while d <= last_push_day:
-    if cal.is_trading(d) and d not in ok_days:
-        push_alerts.append(f"{d:%m/%d}({W[d.weekday()]}) 是交易日，當晚 19:00～23:59 沒有成功的主推播")
+    if cal.is_trading(d):
+        tgt = cal.shift(d, 1)
+        lo = dt.datetime.combine(d, dt.time(19, 0), TPE)
+        hi = dt.datetime.combine(tgt, dt.time(8, 30), TPE)
+        if hi <= now and not any(lo <= t < hi for t in ok_times):
+            push_alerts.append(f"⑧ {tgt:%m/%d}({W[tgt.weekday()]}) 開盤前沒有成功的主推播"
+                               f"（應在 {d:%m/%d} 19:00～{tgt:%m/%d} 08:30 之間送出）")
     d += dt.timedelta(days=1)
 
 name = f"推播紀錄_{start:%Y%m%d}～{today:%Y%m%d}"
