@@ -146,10 +146,26 @@ def t_closure_watch():
     check("通知訊息日期格式", "・004 達勝 7419：出場 10/23→10/27" in msg and "10/23（五）" in msg, True)
 
 
+def t_buyback_actions():
+    """A03 庫藏股同步：signals → strategy_actions"""
+    import buyback_actions as ba
+    sig = {"id": 7673, "entry_date": "2026-10-27", "exit_date": "2026-11-09", "entry_timing": "open",
+           "exit_timing": "close", "ignored": False,
+           "events": {"company_code": "7856", "company_name": "漢測", "event_date": "2026-10-22"}}
+    rows = ba.build([sig], lambda ev: "摘要")
+    check("進出場兩列", [(r["role"], r["act_date"], r["act_timing"], r["pair_date"]) for r in rows],
+          [("entry", "2026-10-27", "open", "2026-11-09"), ("exit", "2026-11-09", "close", "2026-10-27")])
+    check("欄位一致（整批寫入）", len({tuple(sorted(r)) for r in rows}), 1)
+    import reschedule
+    check("A03 屬持有型", "A03" in reschedule.HOLD, True)
+    import daily_push
+    check("舊看板庫藏股買賣不再重複推", daily_push.old_trade({"block_code": "buyback", "src_table": "signals"}), True)
+
+
 if __name__ == "__main__":
     os.environ.setdefault("SUPABASE_URL", "http://x")
     os.environ.setdefault("SUPABASE_SERVICE_KEY", "x")
-    for f in (t_reschedule, t_disposal, t_export_alerts, t_buyback_summary, t_closure_watch):
+    for f in (t_reschedule, t_disposal, t_export_alerts, t_buyback_summary, t_closure_watch, t_buyback_actions):
         print(f"\n— {f.__doc__.splitlines()[0] if f.__doc__ else f.__name__}")
         f()
     print()

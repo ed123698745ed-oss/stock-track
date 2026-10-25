@@ -122,6 +122,13 @@ jobs:
         continue-on-error: true
         run: python3 scripts/split_signals.py
 
+      # 庫藏股（A03）：舊看板 signals 同步到 strategy_actions，推播與改期都走新版
+      - name: 庫藏股同步（A03）
+        if: steps.gate.outputs.go == '1'
+        id: buyback
+        continue-on-error: true
+        run: python3 scripts/buyback_actions.py
+
       - name: 推播 LINE
         if: steps.gate.outputs.go == '1'
         env:
@@ -135,6 +142,7 @@ jobs:
           EXRIGHT_OUTCOME: ${{ steps.exright.outcome }}
           DISPOSAL_OUTCOME: ${{ steps.disposal.outcome }}
           SPLIT_OUTCOME: ${{ steps.split.outcome }}
+          BUYBACK_OUTCOME: ${{ steps.buyback.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           RUN_DAY: ${{ steps.gate.outputs.run_day }}
           FORCE: ${{ github.event.inputs.force || '0' }}
