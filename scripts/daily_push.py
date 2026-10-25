@@ -68,12 +68,12 @@ def strategy_line(r):
 
 
 def old_trade(r):
-    """舊板塊裡規則已改由 strategy_actions 提醒的買賣列（處置 → A02、分割 → A06）。"""
-    return ((r.get("block_code") == "disposal" and r.get("src_table") == "signals")
+    """舊板塊裡規則已改由 strategy_actions 提醒的買賣列（處置 → A02、分割 → A06、庫藏股 → A03）。"""
+    return ((r.get("block_code") in ("disposal", "buyback") and r.get("src_table") == "signals")
             or (r.get("block_code") == "split" and r.get("act_kind") in ("buy", "sell")))
 
 
-OLD_NAMES = {"buyback": "庫藏股", "msci": "MSCI調整", "tw50": "0050調整"}
+OLD_NAMES = {"msci": "MSCI調整", "tw50": "0050調整"}  # 庫藏股 2026-10-25 起改由 A03（buyback_actions.py）
 
 
 def buyback_summary(ev):
@@ -591,6 +591,8 @@ def market_problems(today, cal):
         out.append("內部人申報轉讓抓取失敗，019 今天可能漏掉訊號（明天會再掃最近 7 天）")
     if os.environ.get("SPLIT_OUTCOME", "success") != "success":
         out.append("分割訊號更新失敗，A06 今天可能漏掉換股公告後的進場提醒")
+    if os.environ.get("BUYBACK_OUTCOME", "success") != "success":
+        out.append("庫藏股同步失敗，A03 今天的新訊號可能沒列出，請開網站「庫藏股」確認")
     if os.environ.get("DISPOSAL_OUTCOME", "success") != "success":
         out.append("處置股訊號更新失敗，A02 今天可能漏掉新處置（明天會再算最近 30 天）")
     if os.environ.get("EXRIGHT_OUTCOME", "success") != "success":
@@ -677,7 +679,7 @@ def main():
         if not stg and not tmr and not problems and not chg:
             print("沒有新增訊號，不補推")
             if any(os.environ.get(k, "success") != "success" for k in
-                   ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME", "DISPOSAL_OUTCOME", "SPLIT_OUTCOME")):
+                   ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME", "DISPOSAL_OUTCOME", "SPLIT_OUTCOME", "BUYBACK_OUTCOME")):
                 sys.exit(1)  # 警告稍早已推過；仍讓 Actions 顯示紅燈
             return
         text, shown = compose(now, tmr, stg, None, next_day, problems, late=True, chg=chg)
@@ -715,7 +717,7 @@ def main():
         if keys:
             safe(lambda: supa("intraday_alerts?on_conflict=d,key", "POST", keys,
                               prefer="resolution=ignore-duplicates,return=minimal"))
-    failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME", "DISPOSAL_OUTCOME", "SPLIT_OUTCOME")
+    failed = [k for k in ("CAL_OUTCOME", "MARKET_OUTCOME", "EVENT_OUTCOME", "CASH_OUTCOME", "INSIDER_OUTCOME", "EXRIGHT_OUTCOME", "DISPOSAL_OUTCOME", "SPLIT_OUTCOME", "BUYBACK_OUTCOME")
               if os.environ.get(k, "success") != "success"]
     if (tmr is None and stg is None) or failed:
         sys.exit(1)  # 訊息已送出；讓 Actions 顯示紅燈，不要靜靜綠燈

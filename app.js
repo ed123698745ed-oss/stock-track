@@ -575,8 +575,8 @@ function groupedHtml(ents) {
     a[0].title.localeCompare(b[0].title)).map(groupHtml).join("");
 }
 
-// 舊板塊的處置、分割買賣和總表規則不同，改看 A02／A06（strategy_actions）；與 daily_push.old_trade 一致
-const OLD_DISPOSAL = r => (r.block_code === "disposal" && r.src_table === "signals")
+// 舊板塊的處置、分割、庫藏股買賣改看 A02／A06／A03（strategy_actions）；與 daily_push.old_trade 一致
+const OLD_DISPOSAL = r => (["disposal", "buyback"].includes(r.block_code) && r.src_table === "signals")
   || (r.block_code === "split" && ["buy", "sell"].includes(r.act_kind));
 const boardKind = r => /買進|放空/.test(r.action || "") ? "entry" : (/賣出|回補/.test(r.action || "") ? "exit" : "other");
 

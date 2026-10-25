@@ -16,7 +16,7 @@ import datetime as dt
 import os
 import sys
 
-HOLD = {"004", "010", "014", "015", "019", "020", "A02", "A08"}
+HOLD = {"004", "010", "014", "015", "019", "020", "A02", "A03", "A08"}
 
 
 def next_trading(cal, d):
