@@ -153,6 +153,9 @@ jobs:
                           parts.append("預定 " + shares(cell(6)))
                       if shifted:
                           lo, hi, period = cell(7), cell(8), cell(9)
+                          # 期間也可能拆成起、迄兩格（漢測 7856：115/10/23、115/12/22）
+                          if re.fullmatch(r"\d{2,3}/\d{1,2}/\d{1,2}", cell(9) or "") and re.fullmatch(r"\d{2,3}/\d{1,2}/\d{1,2}", cell(10) or ""):
+                              period = f"{cell(9)}～{cell(10)}"
                           price = f"{lo}～{hi}" if lo and hi else (lo or hi)
                       else:
                           price, period = cell(7), cell(8)

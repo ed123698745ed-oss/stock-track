@@ -11,6 +11,10 @@ on:
         description: '補推模式：只推還沒推過的新訊號（填 1）'
         required: false
         default: '0'
+      force:
+        description: '強制重推完整主推播（今天已推過也送；填 1，只限手動檢查用）'
+        required: false
+        default: '0'
   schedule:
     # 主推播 19:30：排在處置股、庫藏股抓取（cron-job.org 19:05、19:20）之後
     - cron: '30 11 * * 1-5'   # 台北 19:30
@@ -133,5 +137,6 @@ jobs:
           SPLIT_OUTCOME: ${{ steps.split.outcome }}
           DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
           RUN_DAY: ${{ steps.gate.outputs.run_day }}
+          FORCE: ${{ github.event.inputs.force || '0' }}
           LATE: ${{ (github.event.schedule == '7 13 * * 1-5' || github.event.schedule == '37 14 * * 1-5' || github.event.inputs.late == '1') && '1' || '0' }}
         run: python3 scripts/daily_push.py
