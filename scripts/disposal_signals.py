@@ -86,9 +86,24 @@ def main():
         if batch:
             supa("strategy_actions?on_conflict=strategy_id,variant,company_code,cycle,role",
                  "POST", batch, prefer="resolution=merge-duplicates,return=minimal")
-    for code, cyc in skipped:  # 之前寫過、但不是 5／7 日的處置：未來的提醒作廢
-        supa(f"strategy_actions?strategy_id=eq.{SID}&company_code=eq.{code}&cycle=eq.{cyc}"
-             f"&act_date=gte.{today.isoformat()}", "PATCH", {"ignored": True})
+    # 之前已寫入（多半已推播）、這次卻算成不是 5／7 日的處置：不自動作廢，改發警告請 Ed 確認。
+    # 2026-10-25 教訓：颱風休市後重數天數只剩 4 天，自動作廢讓大量、應廣被誤推「取消」。
+    warns = []
+    for code, cyc in skipped:
+        had = supa(f"strategy_actions?select=company_name,act_date,role&strategy_id=eq.{SID}&company_code=eq.{code}"
+                   f"&cycle=eq.{cyc}&ignored=is.false&act_date=gte.{today.isoformat()}") or []
+        if had:
+            nm = had[0].get("company_name") or code
+            warns.append(f"A02 {nm} {code} 處置（{cyc} 起）天數與原訊號不符，未自動取消，請確認是否仍要依原日期執行")
+    try:
+        import json, pathlib
+        out_dir = pathlib.Path(__file__).resolve().parent.parent / "out"
+        out_dir.mkdir(exist_ok=True)
+        (out_dir / "warn_a02.json").write_text(json.dumps(warns, ensure_ascii=False), "utf-8")
+    except Exception as e:
+        print(f"⚠ A02 警告檔寫入失敗：{e}")
+    for w in warns:
+        print("  ⚠ " + w)
     print(f"已寫入 {len(out)} 列")
 
 

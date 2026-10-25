@@ -1,0 +1,17 @@
+name: 休市演練測試
+
+# 不連網、不碰資料庫：模擬颱風臨時休市＋連假，確認改期、處置順延、週報檢查都正確。
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tests/test_closure.py
