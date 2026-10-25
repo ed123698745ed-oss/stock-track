@@ -260,9 +260,15 @@ def ratio_for(code, d, issues):
         cands += supa(f"cash_issues?select=*&company_code=eq.{code}&order=pay_end.desc&limit=3")
     except Exception:
         pass
-    cands = [v for v in cands if v.get("pay_end") and v["pay_end"] <= d.isoformat()
-             and (d - dt.date.fromisoformat(v["pay_end"])).days <= 120]
-    return max(cands, key=lambda v: v["pay_end"])["ratio"] if cands else None
+    # 原本只收「繳款截止 ≤ D」：上市日 D 若被誤判在繳款前（如精技 2414 把認股基準日 11/14 當上市日，
+    # 實際繳款 11/23～11/27），就找不到比例。改成 D 前後 120 天內最接近 D 的一次現增；
+    # 比例本身不依賴 D，未達門檻就直接不做，D 的疑點留給達門檻時再警告。
+    cands = [v for v in cands if v.get("pay_end")
+             and abs((d - dt.date.fromisoformat(v["pay_end"])).days) <= 120]
+    if not cands:
+        return None
+    best = min(cands, key=lambda v: abs((d - dt.date.fromisoformat(v["pay_end"])).days))
+    return float(best["ratio"]), dt.date.fromisoformat(best["pay_end"])
 
 
 WARN017 = []  # 推播要顯示的警告（daily_push 讀 out/warn017.json）
@@ -287,7 +293,8 @@ def run017(cal, today, issues):
         best[code] = (ann, d, name)
     rows = []
     for code, (ann, d, name) in best.items():
-        ratio = ratio_for(code, d, issues)
+        found = ratio_for(code, d, issues)
+        ratio, pay_end = found if found else (None, None)
         if ratio is None:
             print(f"  {code} {name} D={d}：找不到認購比例，略過")
             if d > today:  # 還沒上市的才需要人工確認
@@ -296,6 +303,12 @@ def run017(cal, today, issues):
             continue
         if ratio < TH017:
             print(f"  {code} {name} D={d}：每仟股 {ratio:.2f} 股（未達 146.18）")
+            continue
+        if pay_end and d <= pay_end:  # 新股不可能在繳款截止前上市：D 很可能抓錯（例：認股基準日）
+            print(f"  {code} {name} D={d} 早於繳款截止 {pay_end}，上市日疑似誤判，不產生訊號")
+            if d > today:
+                WARN017.append(f"017 {name} {code} 每仟股 {ratio:.2f} 股達門檻，但解析到的上市日 {d:%m/%d} "
+                               f"早於繳款截止 {pay_end:%m/%d}，上市日疑似誤判，請人工確認")
             continue
         rs, why = build017(cal, code, name, d, ratio, ann)
         print(f"  {code} {name} D={d} 每仟股 {ratio:.2f} → " + (why or "017 符合"))

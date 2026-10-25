@@ -20,6 +20,10 @@ on:
         description: 'A11 核對：除權息日迄'
         required: false
         default: ''
+      queries:
+        description: '其他唯讀查詢：PostgREST 路徑，多筆用 ;; 分隔（須含 select=）'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -36,6 +40,7 @@ jobs:
       TO: ${{ github.event.inputs.to }}
       EX_FROM: ${{ github.event.inputs.ex_from }}
       EX_TO: ${{ github.event.inputs.ex_to }}
+      QUERIES: ${{ github.event.inputs.queries }}
     steps:
       - uses: actions/checkout@v4
       - run: cd scripts && python3 diag_dates.py | tee /tmp/diag.txt

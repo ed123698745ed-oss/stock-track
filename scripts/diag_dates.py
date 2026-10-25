@@ -54,3 +54,10 @@ if ex_from and ex_to:
         print(f"  共 {len(evs)} 筆")
     except Exception as ex:
         print("  讀取失敗", repr(ex))
+
+# 任意唯讀查詢：QUERIES 以「;;」分隔的 PostgREST GET 路徑（只允許 select，不寫入）
+for q in [x.strip() for x in (os.environ.get("QUERIES") or "").split(";;") if x.strip()]:
+    if "select=" not in q:
+        print(f"\n===== 略過（缺 select=）：{q}")
+        continue
+    show(q, q)
