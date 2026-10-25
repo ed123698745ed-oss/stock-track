@@ -21,6 +21,12 @@ now = dt.datetime.now(TPE)
 today = now.date()
 days = int(os.environ.get("DAYS") or 7)
 start = today - dt.timedelta(days=days)
+try:  # 上一份週報已涵蓋的日期不再重複匯出（config/push_export.json 的 min_start）
+    _ms = json.load(open(os.path.join(os.path.dirname(__file__), "..", "config", "push_export.json"), encoding="utf-8")).get("min_start")
+    if _ms and os.environ.get("IGNORE_MIN_START") != "1":
+        start = max(start, dt.date.fromisoformat(_ms))
+except FileNotFoundError:
+    pass
 since = dt.datetime.combine(start, dt.time(0), TPE).astimezone(dt.timezone.utc).isoformat().replace("+", "%2B")
 msgs = supa(f"push_messages?select=id,sent_at,mode,status,text&sent_at=gte.{since}&order=sent_at") or []
 
