@@ -37,9 +37,17 @@ jobs:
               raise SystemExit(f"{d} 是週末，不用登錄")
           if supa(f"market_days?select=d&d=eq.{d.isoformat()}"):
               raise SystemExit(f"{d} 有行情資料，不是休市日，不登錄")
+          if supa(f"holidays?select=market_date&market_date=eq.{d.isoformat()}"):
+              print(f"{d} 已在休市日表，不重複登錄、不重複改期")
+              raise SystemExit(0)
+          open("/tmp/new_holiday", "w").write(d.isoformat())
           supa("holidays", "POST", [{"market_date": d.isoformat(), "name": os.environ["N"][:100]}],
                prefer="resolution=merge-duplicates,return=minimal")
           print(f"已登錄休市日 {d} {os.environ['N']}")
           n = supa("rpc/recalc_signal_dates", "POST", {})
           print(f"重算後有 {n} 筆訊號的進出場日被修正")
           PYEOF
+      # 新版策略訊號（strategy_actions）統一依休市改期：持有型出場順延、錨定型落在休市日才順延
+      - name: 策略訊號改期
+        run: |
+          if [ -f /tmp/new_holiday ]; then cd scripts && python3 reschedule.py "$D"; else echo "不是新登錄的休市日，略過改期"; fi

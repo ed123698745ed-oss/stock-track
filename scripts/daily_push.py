@@ -664,6 +664,7 @@ def main():
             tmr = [r for r in tmr if r.get("due_label") != "明天" or r.get("block_code") not in OLD_NAMES] + (extra or [])
     problems += market_problems(today, cal if hol else None)
     problems += read_out("warn017.json") or []  # cash_issue.py：017 查不到認購比例
+    problems += read_out("warn_a02.json") or []  # disposal_signals.py：處置天數不符、未自動取消
     if late:
         # 晚間補推：只推第一次推播之後才出現的「明天」策略訊號
         stg = [r for r in (stg or []) if r.get("due_label") == "明天" and not r.get("notified_at")]
