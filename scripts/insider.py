@@ -83,9 +83,11 @@ def main():
 
     held = {}  # 本策略自己的持倉：code → 最後出場日
     own = set()  # 已寫入過的事件（重跑同一事件時不能被自己的出場列擋掉）
+    own_exit = {}  # (code, cycle) → 目前寫的出場日；休市日變動後要重算
     for x in supa("strategy_actions?select=company_code,act_date,cycle&strategy_id=eq.019&role=eq.exit&ignored=is.false"):
         c, e = x["company_code"], dt.date.fromisoformat(x["act_date"])
         own.add((c, x["cycle"]))
+        own_exit[(c, x["cycle"])] = x["act_date"]
         held[c] = max(held.get(c, e), e)
 
     rows = []
@@ -120,19 +122,25 @@ def main():
         rows += legs
         held[code] = ext
 
-    # 已寫進場、但出場列還沒有的事件（當時出場日所在年度休市日未公布）：休市日公布後補出場列
+    # 已寫進場的事件：出場列還沒有（當時出場日所在年度休市日未公布），或休市日變動（颱風等臨時休市）
+    # 使出場日不同 → 依現行日曆重算出場列。申報日超出 DAYS 掃描範圍的事件也靠這裡順延。
     try:
         ents = supa("strategy_actions?select=company_code,company_name,cycle,act_date&strategy_id=eq.019&role=eq.entry"
                     f"&ignored=is.false&act_date=gte.{(today - dt.timedelta(days=20)).isoformat()}")
         for e in ents or []:
-            if (e["company_code"], e["cycle"]) in own or any(
-                    r["company_code"] == e["company_code"] and r["cycle"] == e["cycle"] for r in rows):
+            if any(r["company_code"] == e["company_code"] and r["cycle"] == e["cycle"] for r in rows):
                 continue
             ent = dt.date.fromisoformat(e["act_date"])
             ext = cal.shift(ent, HOLD019 - 1)
             if not cal.known(ext):
                 continue
-            print(f"  補出場：{e['company_code']} {e['company_name']} {ent} 進場 → {ext} 收盤回補")
+            cur = own_exit.get((e["company_code"], e["cycle"]))
+            if (e["company_code"], e["cycle"]) in own and cur == ext.isoformat():
+                continue
+            if cur and cur < today.isoformat() and ext.isoformat() < today.isoformat():
+                continue  # 已經過去的出場不動
+            print(f"  {'改出場' if cur else '補出場'}：{e['company_code']} {e['company_name']} {ent} 進場 → {ext} 收盤回補"
+                  + (f"（原 {cur}）" if cur else ""))
             rows += [x for x in leg("019", "內部人申報轉讓", e["company_code"], e["company_name"], e["cycle"], "short",
                                     ent, "open", ext, "close", STAT019) if x["role"] == "exit"]
     except Exception as ex:
