@@ -68,13 +68,21 @@ def parse(text):
                           "timing": "盤中", "detail": m.group(5) + ("；" + "；".join(body) if body else "")})
         elif m := ITEM.match(ln):
             sline = body[0] if body else ""
+            timing = m.group(2) or ""
+            sid = next((re.match(r"(A\d{2}|\d{3})｜", x).group(1) for x in body if re.match(r"(A\d{2}|\d{3})｜", x)), None)
             if sline.startswith("IPO"):
                 strat, rest = "IPO", body
+            elif sid and "｜" in sline and not re.match(r"(A\d{2}|\d{3})｜", sline):
+                # 舊板塊格式：「庫藏股｜開盤買進　目的…」＋「A03｜平均…」→ 策略取 A03，時點取開盤／收盤
+                head, tail = sline.split("｜", 1)
+                strat = sid
+                timing = timing or (re.search(r"開盤|收盤", tail).group(0) if re.search(r"開盤|收盤", tail) else "")
+                rest = [re.sub(r"^(開盤|收盤)(買進|賣出)\s*", "", tail).strip()] + [x for x in body[1:] if not x.startswith(sid + "｜")]
             else:
                 strat, rest = sline.split(" ")[0] or "?", body[1:]
-            detail = "；".join(x for x in rest if not x.startswith("平均"))
+            detail = "；".join(x for x in rest if x and not x.startswith("平均"))
             items.append({"strategy": strat, "name": m.group(3), "code": m.group(4), "action": m.group(1),
-                          "timing": m.group(2) or "", "detail": detail})
+                          "timing": timing, "detail": detail})
         elif m := GROUP.match(ln):
             grp, sub, common = m.group(1), None, ""
         elif (m := SUB.match(ln)) and grp:
