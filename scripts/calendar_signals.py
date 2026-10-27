@@ -204,10 +204,11 @@ def build(cal, years, tsmc_calls=()):
                 rows.extend(leg("009", f"{nm}{code}", code, nm, str(y), side,
                                 ent, "open", ext, "close",
                                 {"name": "產業旺季前預期效應", "n": n, "win": win, "p": p}))
-            # 009 大立光：6 月最後交易日前第 42 個交易日開盤買 → 6 月最後交易日收盤賣
+            # 009 大立光：7 月第一個交易日往前第 42 個交易日開盤買 → 6 月最後交易日收盤賣
+            # （依 009 執行策略清單 V03：固定持有 42 個交易日，進場日與出場日都算）
             code, nm, side, n, win, p = S009[3]
             ext = cal.month_days(y, 6)[-1]
-            ent = cal.shift(ext, -42)
+            ent = cal.shift(cal.month_days(y, 7)[0], -42)
             add(f"009 {nm} {y}", [ent], lambda: leg(
                 "009", f"{nm}{code}", code, nm, str(y), side, ent, "open", ext, "close",
                 {"name": "產業旺季前預期效應", "n": n, "win": win, "p": p}))

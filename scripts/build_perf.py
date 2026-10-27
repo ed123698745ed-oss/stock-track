@@ -16,6 +16,9 @@ import openpyxl
 OUT = pathlib.Path(__file__).resolve().parent.parent / "config" / "perf.json"
 STATUS = {"A07": "暫停"}           # Ed 指示暫停的策略
 REMIND = {"015": "提醒型（名單人工確認）"}
+# 已列可執行但 Ed 尚未交付 Emit（總表驗證狀態寫「Emit待交付／暫緩」）：不上網站、不推播。
+# Ed 交付後從這裡移除再重跑。
+NOT_DELIVERED = {"022", "023", "030"}
 
 
 def variant(sid, name, rule):
@@ -82,6 +85,9 @@ def main(path):
             cols["status_note"] = "驗證狀態"
         for r in rows(wb[sheet], cols):
             sid = str(r["sid"]).strip()
+            if sid in NOT_DELIVERED:
+                print(f"  略過 {sid}：尚未交付 Emit")
+                continue
             name = str(r["name"]).strip()
             h, unit = hold(r["hold"])
             kelly = num(r["kelly"])

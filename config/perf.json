@@ -1,6 +1,6 @@
 {
  "_source": "可執行策略總表（Google 試算表）",
- "_built": "2026-10-17",
+ "_built": "2026-10-27",
  "_note": "數字照總表搬，空白存 null；半凱利＝凱利÷2。",
  "strategies": {
   "A01": {
@@ -644,7 +644,7 @@
     },
     "大立光3008": {
      "label": "V01/R06",
-     "rule": "V01/R06｜6月最後交易日前42個交易日開盤買進；6月最後交易日收盤賣出",
+     "rule": "V01/R06｜7月第一個交易日往前第42個交易日開盤買進（約4/29～5/3）；6月最後交易日收盤賣出（固定持有42個交易日）",
      "filter": "",
      "side": "多",
      "n": 16,
@@ -706,7 +706,7 @@
      "side": "空",
      "n": 900,
      "avg": 0.0196,
-     "hold": 1.0,
+     "hold": 1.14,
      "hold_unit": "交易日",
      "ann": 4.33,
      "win": 0.67,
@@ -811,7 +811,7 @@
      "cost": "未計交易稅、手續費、滑價、借券費；放空腳未檢查券源",
      "source": "https://docs.google.com/document/d/1WqGT8Q3OYJGmLPE30RpwUXCoW58cywf3PyvlBrykzE4/edit\nhttps://drive.google.com/file/d/1Rfru-0O2F2rW5AQSW_fHanf-tE8f0KjX/view",
      "risk": "多空報酬以單腳本金為分母；若以總曝險為分母，平均報酬需約減半。樣本外已看過於R01，並非完全獨立；放空新增股券源是主要未知。",
-     "verify": "Ed核准；Eve R03通過"
+     "verify": "Ed核准；Eve R03計算修正通過（資料時點、交易抽查、可交易性部分未驗證）"
     },
     "台灣50多空": {
      "label": "V03/R03",
@@ -836,7 +836,7 @@
      "cost": "未計交易稅、手續費、滑價、借券費；放空腳未檢查券源",
      "source": "https://docs.google.com/document/d/1WqGT8Q3OYJGmLPE30RpwUXCoW58cywf3PyvlBrykzE4/edit\nhttps://drive.google.com/file/d/1Rfru-0O2F2rW5AQSW_fHanf-tE8f0KjX/view",
      "risk": "多空報酬以單腳本金為分母；若以總曝險為分母，平均報酬需約減半。樣本外已看過於R01，並非完全獨立；放空新增股券源是主要未知。",
-     "verify": "Ed核准；Eve R03通過"
+     "verify": "Ed核准；Eve R03計算修正通過（資料時點、交易抽查、可交易性部分未驗證）"
     },
     "MSCI新增股放空": {
      "label": "V03/R03",
@@ -861,7 +861,7 @@
      "cost": "未計交易稅、手續費、滑價、借券費；放空腳未檢查券源",
      "source": "https://docs.google.com/document/d/1WqGT8Q3OYJGmLPE30RpwUXCoW58cywf3PyvlBrykzE4/edit\nhttps://drive.google.com/file/d/1Rfru-0O2F2rW5AQSW_fHanf-tE8f0KjX/view",
      "risk": "新增股在納入當下可能無券可借或借券費偏高；樣本外非完全獨立；實盤前須驗證券源。",
-     "verify": "Ed核准；Eve R03通過"
+     "verify": "Ed核准；Eve R03計算修正通過（資料時點、交易抽查、可交易性部分未驗證）"
     }
    }
   },
@@ -941,7 +941,7 @@
      "side": "多",
      "n": 34,
      "avg": 0.099046,
-     "hold": 20.0087,
+     "hold": 20.008669,
      "hold_unit": "交易日",
      "ann": 1.247439,
      "win": 0.794118,
