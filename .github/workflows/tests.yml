@@ -1,4 +1,4 @@
-name: 休市演練測試
+name: 休市演練與日曆策略測試
 
 # 不連網、不碰資料庫：模擬颱風臨時休市＋連假，確認改期、處置順延、週報檢查都正確。
 on:
@@ -15,3 +15,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 tests/test_closure.py
+      - run: python3 tests/test_009.py
