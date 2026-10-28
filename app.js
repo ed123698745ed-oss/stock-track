@@ -2,9 +2,9 @@ const SUPABASE_URL = "https://cvjjzboacbileqikwgcy.supabase.co";
 const GH = "https://github.com/ed123698745ed-oss/stock-track/actions";
 
 const $ = id => document.getElementById(id);
-let SUPABASE_KEY = "";
-try { SUPABASE_KEY = localStorage.getItem("sb_key") || ""; } catch (e) {}
-const sb = SUPABASE_KEY ? supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+// publishable key 本來就是公開給前端用的；資料靠 RLS（只開放登入者）保護。
+const SUPABASE_KEY = "sb_publishable_Jzq_sMXSnSNbcC3_FmESww_mwgjkUpH";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const W = ["日", "一", "二", "三", "四", "五", "六"];
 let CAL = [], STG = [];
@@ -314,16 +314,9 @@ function navCount(id, n) {
   if (el) el.textContent = n ? String(n) : "";
 }
 
-// ---------- 金鑰 / 登入 ----------
-$("btnKey").onclick = () => {
-  const v = $("key").value.trim();
-  if (!v) return;
-  try { localStorage.setItem("sb_key", v); } catch (e) {}
-  location.reload();
-};
+// ---------- 登入 ----------
 
 async function boot() {
-  if (!sb) { $("setup").hidden = false; return; }
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     $("login").hidden = true; $("app").hidden = false;
