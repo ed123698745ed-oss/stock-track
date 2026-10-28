@@ -1076,9 +1076,13 @@ function renderSplit(rows, det, leads) {
   rows.sort((a, b) => (rank[a.grp] ?? 9) - (rank[b.grp] ?? 9));
 
   // A06（總表 2026-10-15 修正版）：公告換股（盤後）→ 隔日開盤買 → 新股上市第 5 日收盤賣
+  // 2026-10-28 印能事故：股東會日距宣告不足 15 天（臨時會法定通知期），多半是把「召開股東會公告」
+  //   的發布日誤當開會日 → 不顯示為已完成，改顯示待補，等 split_mops 依公告內文更正
+  const meetOk = r => !(r.meeting_date && r.declare_date &&
+    (new Date(r.meeting_date) - new Date(r.declare_date)) / 864e5 < 15);
   const flow = r => flowHtml([
     ["宣告拆股", r.declare_date],
-    ["股東會", r.meeting_date],
+    ["股東會", meetOk(r) ? r.meeting_date : null],
     ["公告換股", r.swap_date],
     ["隔日開盤買", r.swap_date ? nextTrading(r.swap_date) : null],
     ["新股上市", r.listing_date],
