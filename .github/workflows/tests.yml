@@ -17,3 +17,4 @@ jobs:
       - run: python3 tests/test_closure.py
       - run: python3 tests/test_009.py
       - run: python3 tests/test_split.py
+      - run: python3 tests/test_split_classify.py
