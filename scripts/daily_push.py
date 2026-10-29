@@ -260,8 +260,10 @@ def changes(today):
     回傳 [(去重 key, 訊息, 紀錄)]。推播時記 sent:<id>:<時間>:<快照>；沒記過的列不比對（不推估）。
     網站上手動「忽略」（checked=true）只是隱藏，不推取消。"""
     try:
+        # 已進場、出場還沒到的列也要比：出場日（pair_date）被休市順延時，只有進場那列推過，
+        # 只看 act_date≥今天會漏掉（2026-10-29 勝一 1773：推 10/29 回補，後改 10/30 沒通知）
         rows = supa("strategy_actions?select=*&notified_at=not.is.null"
-                    f"&act_date=gte.{today.isoformat()}&limit=500")
+                    f"&or=(act_date.gte.{today.isoformat()},pair_date.gt.{today.isoformat()})&limit=500")
         if not rows:
             return []
         since = (today - dt.timedelta(days=90)).isoformat()
@@ -291,6 +293,17 @@ def changes(today):
         act = ACT[(r["role"], r["side"])]
         head = f"{r['strategy_id']} {r['strategy_name']}｜{r['company_name']} {r['company_code']} {act}"
         was = f"{md(old[0])}" + (f" {TIMING.get(old[1] or None)}" if len(old) > 1 else "")
+        if r["act_date"] < today.isoformat():
+            # 已過的進場（或出場）：只看配對日期有沒有變
+            if r["ignored"] or len(old) < 3 or not r.get("pair_date") or old[2] == r["pair_date"]:
+                continue
+            pa = ACT[("exit" if r["role"] == "entry" else "entry", r["side"])]
+            pt = TIMING.get(r.get("pair_timing"))
+            ph = f"{r['strategy_id']} {r['strategy_name']}｜{r['company_name']} {r['company_code']} {pa}"
+            out.append((None, f"【更正】{ph}\n　原 {md(old[2])} {pt} → 改為 {md(r['pair_date'])} {pt}"
+                              f"｜{act} {md(r['act_date'])} {TIMING.get(r.get('act_timing'))} 不變（休市順延等）",
+                        dict(r, action="更正")))
+            continue
         if r["ignored"]:
             if r.get("checked") or f"cancel:{rid}" in keys:
                 continue  # 手動忽略不是策略取消；取消只推一次
