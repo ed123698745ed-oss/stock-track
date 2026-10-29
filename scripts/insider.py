@@ -125,7 +125,7 @@ def main():
     # 已寫進場的事件：出場列還沒有（當時出場日所在年度休市日未公布），或休市日變動（颱風等臨時休市）
     # 使出場日不同 → 依現行日曆重算出場列。申報日超出 DAYS 掃描範圍的事件也靠這裡順延。
     try:
-        ents = supa("strategy_actions?select=company_code,company_name,cycle,act_date&strategy_id=eq.019&role=eq.entry"
+        ents = supa("strategy_actions?select=id,company_code,company_name,cycle,act_date,pair_date&strategy_id=eq.019&role=eq.entry"
                     f"&ignored=is.false&act_date=gte.{(today - dt.timedelta(days=20)).isoformat()}")
         for e in ents or []:
             if any(r["company_code"] == e["company_code"] and r["cycle"] == e["cycle"] for r in rows):
@@ -134,6 +134,11 @@ def main():
             ext = cal.shift(ent, HOLD019 - 1)
             if not cal.known(ext):
                 continue
+            # 進場列的 pair_date 也要跟著改：網站與「更正」比對看的是進場列（2026-10-29 勝一事故：只改了出場列）
+            if e.get("pair_date") != ext.isoformat() and ext >= today:
+                print(f"  同步進場列出場日：{e['company_code']} {e['company_name']} {e.get('pair_date')} → {ext}")
+                if not dry:
+                    supa(f"strategy_actions?id=eq.{e['id']}", "PATCH", {"pair_date": ext.isoformat()})
             cur = own_exit.get((e["company_code"], e["cycle"]))
             if (e["company_code"], e["cycle"]) in own and cur == ext.isoformat():
                 continue

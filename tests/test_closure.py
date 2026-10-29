@@ -162,10 +162,37 @@ def t_buyback_actions():
     check("舊看板庫藏股買賣不再重複推", daily_push.old_trade({"block_code": "buyback", "src_table": "signals"}), True)
 
 
+def t_pair_change():
+    """已進場、出場日被順延 → 主推播要推更正（2026-10-29 勝一事故）"""
+    import daily_push as dp
+    today = D("2026-10-28")
+    row = dict(id=3132, strategy_id="019", strategy_name="內部人申報轉讓", company_code="1773", company_name="勝一",
+               role="entry", side="short", act_date="2026-10-22", act_timing="open", pair_date="2026-10-30",
+               pair_timing="close", ignored=False, checked=False)
+    sent = "sent:3132:1761046459:2026-10-22|open|2026-10-29"
+    asked = []
+
+    def fake(path, *a, **k):
+        asked.append(path)
+        if path.startswith("strategy_actions"):
+            return [row]
+        return [{"key": sent, "created_at": "2026-10-21T11:34:19+00:00"}]
+    orig, dp.supa = dp.supa, fake
+    try:
+        out = dp.changes(today)
+        check("查詢含 pair_date>今天", "pair_date.gt.2026-10-28" in asked[0], True)
+        check("推一則更正", len(out), 1)
+        check("內容寫回補 10/29→10/30", ("回補" in out[0][1] and "10/29" in out[0][1] and "10/30" in out[0][1]), True)
+        row["pair_date"] = "2026-10-29"
+        check("出場日沒變不推", dp.changes(today), [])
+    finally:
+        dp.supa = orig
+
+
 if __name__ == "__main__":
     os.environ.setdefault("SUPABASE_URL", "http://x")
     os.environ.setdefault("SUPABASE_SERVICE_KEY", "x")
-    for f in (t_reschedule, t_disposal, t_export_alerts, t_buyback_summary, t_closure_watch, t_buyback_actions):
+    for f in (t_reschedule, t_disposal, t_export_alerts, t_buyback_summary, t_closure_watch, t_buyback_actions, t_pair_change):
         print(f"\n— {f.__doc__.splitlines()[0] if f.__doc__ else f.__name__}")
         f()
     print()
