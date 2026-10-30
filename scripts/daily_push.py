@@ -140,12 +140,11 @@ def block_line(r):
 def watch_lines(watch):
     if not watch:
         return []
-    out = ["", f"▍明天盯盤（010 開板放空）　{len(watch)} 檔"]
+    out = ["", "【010】開板放空（盯盤）"]
     for w in watch[:10]:
-        out.append(f"{w['name']} {w['code']}　已連 {w['streak']} 根漲停")
+        out.append(f"· 收盤沒鎖漲停放空：{w['name']} {w['code']}")
     if len(watch) > 10:
         out.append(f"…另有 {len(watch) - 10} 檔")
-    out.append("　收盤沒鎖漲停 → 收盤放空、下一交易日收盤回補（13:05 盤中會再提醒）")
     return out
 
 
@@ -168,7 +167,6 @@ def index_prep(cal, today):
     out = ["", f"▍提前準備（{md(target)} 指數調整生效）"]
     for c in codes:
         out.append(f"{IDX_NAME[c]}：後天收盤生效")
-    out.append("　確認新增／刪除名單、放空腳的券源；015 生效日後第 1 個交易日開盤進場")
     return out
 
 
@@ -193,13 +191,8 @@ def msci_prep(cal, today):
         tw = cal.shift(us, 1)
         if tw != nxt:
             continue
-        eff = next((dt.date.fromisoformat(x["event_date"]) for x in rows
-                    if x["kind"] == "effective" and x["event_date"] > tw.isoformat()), None)
-        out += ["", "▍提前準備（A04 MSCI 季度調整）",
-                f"MSCI 美東 {md(us)} 公布，台灣明天 {md(tw)} 清晨看到名單",
-                f"　新增成分股 → 明天收盤買進" + (f"，生效日 {md(eff)} 收盤賣" if eff else "，生效日請對照公告"),
-                "　名單出來後請到網站「指數調整」填入新增股",
-                "　" + (perf.summary("A04") or "績效：總表未提供")]
+        out += ["", "【A04】MSCI 季度調整",
+                "· 收盤買進：新增成分股（名單填到網站「指數調整」）"]
     return out
 
 
@@ -340,50 +333,32 @@ TIMING_ORDER = {"開盤": 0, "收盤": 1}
 BLOCK_TIMING = re.compile(r"^(開盤|收盤)(買進|賣出|放空|回補)$")
 
 
-def _w(s):
-    """手機上的顯示寬度：中文 1、半形 0.5。"""
-    return sum(0.5 if ord(c) < 0x2E80 else 1 for c in s)
-
-
 def _entry(r, kind):
-    """把一列（策略訊號或舊板塊）轉成排版用的資料。"""
+    """把一列（策略訊號或舊板塊）轉成排版用的資料：只留策略、時點、動作、股票。"""
     if kind == "S":
         sid = r["strategy_id"]
-        title = f"{sid} {r['strategy_name']}" + (
-            "" if r["variant"] == r["company_name"] + r["company_code"] else f"・{r['variant']}")
-        stat = perf.summary(sid, r.get("variant"))
-        detail = r.get("detail") or ""
-        if stat:
-            detail = "｜".join(x for x in OLD_STAT.sub("", detail).split("｜") if x.strip())
-        frags = []
-        if r.get("pair_date"):
-            pair = "出場" if r["role"] == "entry" else "進場"
-            frags.append(f"{pair} {md(r['pair_date'])} {TIMING.get(r.get('pair_timing'))}")
-        frags += [x.strip() for x in detail.split("｜") if x.strip()]
-        return {"g": ("S", sid, r.get("variant")), "title": title,
-                "stat": stat or "績效：總表未提供", "note": perf.NOTES.get(sid) if stat else None,
-                "timing": TIMING.get(r.get("act_timing")), "action": r["action"], "exit": r["role"] == "exit",
-                "name": r["company_name"], "code": r["company_code"], "frags": frags, "row": r}
+        # variant 預設是「股名代號」，那種情況不算子策略，同策略的股票併成一組
+        var = None if r["variant"] == r["company_name"] + r["company_code"] else r["variant"]
+        name = r["strategy_name"] + (f"・{var}" if var else "")
+        return {"g": ("S", sid, var), "title": f"【{sid}】{name}",
+                "timing": TIMING.get(r.get("act_timing")), "action": r["action"],
+                "stock": f"{r['company_name']} {r['company_code']}", "row": r}
     code = r.get("block_code")
     sid = perf.BLOCK_SID.get(code)
-    title = f"{sid} {r.get('block') or ''}".strip() if sid else (r.get("block") or "其他")
-    stat = None
-    if r.get("act_kind") in ("buy", "sell"):
-        stat = perf.PENDING.get(code) or (perf.summary(sid) or "績效：總表未提供" if sid else None)
+    block = r.get("block") or "其他"
+    title = f"【{sid}】{block}" if sid else f"【{block}】"
     frags = [x.strip() for x in (r.get("detail") or "").split("　") if x.strip()]
     timing = None
     if frags and (m := BLOCK_TIMING.match(frags[0])):
         timing, frags = m.group(1), frags[1:]
-    frags = [re.sub(r"承銷價 (0\.0|0|None)(?=[^\d.]|$)", "承銷價 未定", x) for x in frags]
-    action = r.get("action") or "注意"
-    return {"g": ("B", code), "title": title, "stat": stat, "note": None, "timing": timing,
-            "action": action, "exit": bool(re.search(r"賣出|回補", action)),
-            "name": r.get("company_name") or "", "code": r.get("company_code") or "", "frags": frags, "row": r}
+    stock = f"{r.get('company_name') or ''} {r.get('company_code') or ''}".strip()
+    return {"g": ("B", code), "title": title, "timing": timing, "action": r.get("action") or "注意",
+            "stock": stock or (frags[0] if frags else ""), "row": r}
 
 
 def render_items(tmr, stg):
     """回傳 (行列表, 實際列出的原始列)。
-    【策略】一行績效 → ◆ 時點＋動作 N 檔 → 同組共同條件一行 → 每檔一行（個別說明接在後面或下一行）。"""
+    【代號】策略名 → 每檔一行「· 時點動作：股名 代號」，依時點、動作排序。"""
     ents = [_entry(r, "B") for r in (tmr or [])] + [_entry(r, "S") for r in (stg or [])]
     groups = OrderedDict()
     for e in ents:
@@ -392,33 +367,16 @@ def render_items(tmr, stg):
     def gorder(es):
         return (min(TIMING_ORDER.get(e["timing"], 2) for e in es), es[0]["title"])
 
+    def eorder(e):
+        return (TIMING_ORDER.get(e["timing"], 2), ACT_ORDER.get(e["action"], 9), e["action"])
+
     out = []
     for es in sorted(groups.values(), key=gorder):
-        out += ["", f"【{es[0]['title']}】"]
-        if es[0]["stat"]:
-            out.append(es[0]["stat"])
-        if es[0]["note"]:
-            out.append("※" + es[0]["note"])
-        subs = OrderedDict()
-        for e in es:
-            subs.setdefault((e["timing"], e["action"]), []).append(e)
-        for (timing, action), xs in sorted(subs.items(), key=lambda kv: (
-                TIMING_ORDER.get(kv[0][0], 2), ACT_ORDER.get(kv[0][1], 9), kv[0][1])):
-            when = f"{timing}{action}" if timing in TIMING_ORDER else (
-                f"{action}（{timing}）" if timing else action)
-            out.append(f"◆ {when} {len(xs)} 檔" + ("（若有持倉）" if xs[0]["exit"] else ""))
-            common = [f for f in xs[0]["frags"] if all(f in x["frags"] for x in xs)] if len(xs) > 1 else []
-            if common:
-                out.append("　" + "｜".join(common))
-            for x in xs:
-                rest = "｜".join(f for f in x["frags"] if f not in common)
-                head = f"・{x['name']} {x['code']}".rstrip()
-                if rest and _w(head + "　" + rest) <= 21:
-                    out.append(f"{head}　{rest}")
-                else:
-                    out.append(head)
-                    if rest:
-                        out.append("　　" + rest)
+        out += ["", es[0]["title"]]
+        for e in sorted(es, key=eorder):
+            t, a = e["timing"], e["action"]
+            when = f"{t}{a}" if t in TIMING_ORDER else (f"{a}（{t}）" if t else a)
+            out.append(f"· {when}：{e['stock']}".rstrip("："))
     return out, [e["row"] for e in ents]
 
 
@@ -434,7 +392,7 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
             out += ["", "▍新增"] + lines
         out += change_lines(chg)
         return fit("\n".join(out + ["", site(next_day)])), shown
-    out = [f"交易提醒｜{head_day} 要做的事"]
+    out = [f"交易提醒｜{head_day}"]
 
     if run:
         t = dt.datetime.fromisoformat((run.get("finished_at") or run["started_at"]).replace("Z", "+00:00"))
