@@ -137,10 +137,11 @@ def block_line(r):
     return "\n".join(lines)
 
 
-def watch_lines(watch):
+def watch_lines(watch, exit_day=None):
+    """exit_day：盯盤放空的回補日（next_day 的下一個交易日）；算不出來就不標日期。"""
     if not watch:
         return []
-    out = ["", f"【010】開板放空（盯盤）｜{EXIT_HINT['010']}"]
+    out = ["", f"【010】開板放空（盯盤）｜{hint_text(EXIT_HINT['010'], exit_day)}"]
     for w in watch[:10]:
         out.append(f"· 收盤沒鎖漲停放空：{w['name']} {w['code']}")
     if len(watch) > 10:
@@ -377,6 +378,22 @@ def exit_hint(r, kind):
     return h and h.format(x="回補" if r.get("side") == "short" else "賣")
 
 
+# 相對日數的提示（持有N日、隔天…、第N日）看不出是哪天，後面補上實際出場日；
+# 開紅盤日、除權息日這類本身就是日曆日的不補
+RELATIVE_HINT = re.compile(r"持有\d+日|^隔天|第\d+日")
+
+
+def exit_date(r):
+    """出場日直接取 strategy_actions 的日期，不用 N 重算：進場列看 pair_date、出場列看 act_date。"""
+    return r.get("pair_date") if r.get("role") == "entry" else r.get("act_date")
+
+
+def hint_text(hint, day):
+    if day and RELATIVE_HINT.search(hint):
+        return f"{hint}（{md(day)}）"
+    return hint
+
+
 def _entry(r, kind):
     """把一列（策略訊號或舊板塊）轉成排版用的資料：只留策略、時點、動作、股票。"""
     if kind == "S":
@@ -385,7 +402,7 @@ def _entry(r, kind):
         var = None if r["variant"] == r["company_name"] + r["company_code"] else r["variant"]
         name = r["strategy_name"] + (f"・{var}" if var else "")
         return {"g": ("S", sid, var), "title": f"【{sid}】{name}", "hint": exit_hint(r, kind),
-                "timing": TIMING.get(r.get("act_timing")), "action": r["action"],
+                "exit": exit_date(r), "timing": TIMING.get(r.get("act_timing")), "action": r["action"],
                 "stock": f"{r['company_name']} {r['company_code']}", "row": r}
     code = r.get("block_code")
     sid = perf.BLOCK_SID.get(code)
@@ -396,7 +413,7 @@ def _entry(r, kind):
     if frags and (m := BLOCK_TIMING.match(frags[0])):
         timing, frags = m.group(1), frags[1:]
     stock = f"{r.get('company_name') or ''} {r.get('company_code') or ''}".strip()
-    return {"g": ("B", code), "title": title, "hint": exit_hint(r, kind), "timing": timing, "action": r.get("action") or "注意",
+    return {"g": ("B", code), "title": title, "hint": exit_hint(r, kind), "exit": None, "timing": timing, "action": r.get("action") or "注意",
             "stock": stock or (frags[0] if frags else ""), "row": r}
 
 
@@ -419,6 +436,10 @@ def render_items(tmr, stg):
         hints = {e["hint"] for e in es}
         # 同一組規則不一致（如 009 不同股票）或沒有規則：維持原標題
         hint = hints.pop() if len(hints) == 1 else None
+        # 出場日也一樣：同組各列出場日不同（如 004 今天回補舊部位、又開新部位）或有缺，只放提示不放日期
+        exits = {e["exit"] for e in es}
+        if hint:
+            hint = hint_text(hint, exits.pop() if len(exits) == 1 else None)
         out += ["", es[0]["title"] + (f"｜{hint}" if hint else "")]
         for e in sorted(es, key=eorder):
             t, a = e["timing"], e["action"]
@@ -427,8 +448,8 @@ def render_items(tmr, stg):
     return out, [e["row"] for e in ents]
 
 
-def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep=None, chg=None):
-    """回傳 (訊息文字, 有列進訊息的原始列)。"""
+def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep=None, chg=None, cal=None):
+    """回傳 (訊息文字, 有列進訊息的原始列)。cal：交易日曆，用來算 010 盯盤的回補日；None 就不標日期。"""
     head_day = md(next_day) if next_day else "下一個交易日"
     if late:
         out = [f"補充提醒｜{head_day}（稍晚公布的資料）"]
@@ -464,7 +485,8 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
         out.append(f"明天 {head_day} 沒有要進出場的部位。")
 
     out += change_lines(chg)
-    out += watch_lines(watch)
+    watch_exit = cal.shift(next_day, 1) if cal and next_day else None
+    out += watch_lines(watch, watch_exit if watch_exit and cal.known(watch_exit) else None)
     out += prep or []
 
     out += ["", site(next_day)]
@@ -728,7 +750,8 @@ def main():
     else:
         chg = changes(today)
         text, shown = compose(now, tmr, stg, (runs or [None])[0], next_day, problems, read_out("watch010.json"),
-                       prep=index_prep(cal if hol else None, today) + msci_prep(cal if hol else None, today), chg=chg)
+                       prep=index_prep(cal if hol else None, today) + msci_prep(cal if hol else None, today), chg=chg,
+                       cal=cal if hol else None)
     print(text)
     if os.environ.get("DRY_RUN") == "1":
         print("\nDRY_RUN：不推送")
