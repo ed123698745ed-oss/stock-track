@@ -40,7 +40,7 @@ def fake_rows():
 
 def compose():
     tmr, stg, watch = fake_rows()
-    text, shown = dp.compose(NOW, tmr, stg, RUN, NEXT, [], watch)
+    text, shown = dp.compose(NOW, tmr, stg, RUN, NEXT, [], watch, cal=FakeCal())
     return text, shown, tmr, stg
 
 
@@ -54,12 +54,14 @@ def test_header_and_counts():
 
 def test_group_lines():
     text, *_ = compose()
+    # 004 同組一列回補（出場日 11/2）、一列放空（出場日 11/9）：出場日不一致，只放提示不放日期
     want = "【004】菲比斯 630 大額現增放空｜持有10日收盤回補\n· 開盤放空：東森 2614\n· 收盤回補：源大環能 6639"
     assert want in text
-    assert "【019】內部人申報轉讓｜持有5日收盤回補\n· 開盤放空：勝一 1773" in text
+    assert "【019】內部人申報轉讓｜持有5日收盤回補（11/4(三)）\n· 開盤放空：勝一 1773" in text
     # 提醒型板塊（處置股注意）沒有出場規則：維持原標題
     assert "【A02】處置股\n· 注意：漢測 7856" in text
-    assert "【010】開板放空（盯盤）｜隔天收盤回補\n· 收盤沒鎖漲停放空：群聯 8299" in text
+    # 盯盤：明天 11/2 收盤放空 → 下一個交易日 11/3 收盤回補
+    assert "【010】開板放空（盯盤）｜隔天收盤回補（11/3(二)）\n· 收盤沒鎖漲停放空：群聯 8299" in text
 
 
 def test_no_extra_details():
@@ -79,7 +81,7 @@ def test_exit_hint_by_strategy():
     a08["variant"] = "單日≤−5%"
     assert title_of([a08]) == ["【A08】大盤-5%・單日≤−5%｜持有5日收盤賣"]
     c010 = srow("010", "連續漲跌停開板反轉", "群聯", "8299", "exit", "short", "close")
-    assert title_of([c010]) == ["【010】連續漲跌停開板反轉｜隔天收盤回補"]
+    assert title_of([c010]) == ["【010】連續漲跌停開板反轉｜隔天收盤回補（11/2(一)）"]
     c017 = srow("017", "現增上市賣壓與反彈", "某股", "1234", "entry", "short", "open")
     c017["variant"] = "現增上市放空"
     assert title_of([c017]) == ["【017】現增上市賣壓與反彈・現增上市放空｜隔天開盤回補"]
@@ -105,6 +107,43 @@ def test_exit_hint_mixed_group_keeps_title():
     b = srow("009", "產業旺季前預期效應", "大立光", "3008", "exit", "long", "close")
     assert title_of([a]) == ["【009】產業旺季前預期效應｜8月最後交易日收盤回補"]
     assert title_of([a, b]) == ["【009】產業旺季前預期效應"]
+
+
+def test_exit_date_entry_uses_pair_date():
+    r = srow("019", "內部人申報轉讓", "勝一", "1773", "entry", "short", "open", pair_date="2026-11-12")
+    assert title_of([r]) == ["【019】內部人申報轉讓｜持有5日收盤回補（11/12(四)）"]
+
+
+def test_exit_date_exit_uses_act_date():
+    r = srow("004", "菲比斯 630 大額現增放空", "東森", "2614", "exit", "short", "close", pair_date="2026-10-20")
+    assert title_of([r]) == ["【004】菲比斯 630 大額現增放空｜持有10日收盤回補（11/2(一)）"]
+
+
+def test_exit_date_inconsistent_in_group():
+    a = srow("019", "內部人申報轉讓", "勝一", "1773", "entry", "short", "open", pair_date="2026-11-04")
+    b = srow("019", "內部人申報轉讓", "東森", "2614", "entry", "short", "open", pair_date="2026-11-05")
+    assert title_of([a, b]) == ["【019】內部人申報轉讓｜持有5日收盤回補"]
+    c = srow("019", "內部人申報轉讓", "東森", "2614", "entry", "short", "open", pair_date="2026-11-04")
+    assert title_of([a, c]) == ["【019】內部人申報轉讓｜持有5日收盤回補（11/4(三)）"]
+
+
+def test_exit_date_missing_pair_date():
+    r = srow("019", "內部人申報轉讓", "勝一", "1773", "entry", "short", "open")
+    assert title_of([r]) == ["【019】內部人申報轉讓｜持有5日收盤回補"]
+    # 同組一列有日期、一列缺：也不放日期
+    a = srow("019", "內部人申報轉讓", "東森", "2614", "entry", "short", "open", pair_date="2026-11-04")
+    assert title_of([r, a]) == ["【019】內部人申報轉讓｜持有5日收盤回補"]
+
+
+def test_exit_date_fixed_calendar_hint_unchanged():
+    r = srow("A11", "除權息", "台積電", "2330", "entry", "long", "close", pair_date="2026-11-12")
+    r["variant"] = "一般"
+    assert title_of([r]) == ["【A11】除權息・一般｜除權息日收盤賣"]
+
+
+def test_watch_without_cal_has_no_date():
+    text, _ = dp.compose(NOW, [], [], RUN, NEXT, [], [{"name": "群聯", "code": "8299"}])
+    assert "【010】開板放空（盯盤）｜隔天收盤回補\n" in text
 
 
 def test_exit_hint_blocks():
