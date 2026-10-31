@@ -191,8 +191,11 @@ def msci_prep(cal, today):
         tw = cal.shift(us, 1)
         if tw != nxt:
             continue
+        eff = next((dt.date.fromisoformat(x["event_date"]) for x in rows
+                    if x["kind"] == "effective" and x["event_date"] > tw.isoformat()), None)
         out += ["", "【A04】MSCI 季度調整",
-                "· 收盤買進：新增成分股（名單填到網站「指數調整」）"]
+                "· 收盤買進：新增成分股（名單填到網站「指數調整」）",
+                f"· 生效日收盤賣：{md(eff)}" if eff else "· 生效日收盤賣：請對照公告"]
     return out
 
 

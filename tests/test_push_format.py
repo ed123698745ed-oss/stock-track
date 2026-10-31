@@ -78,5 +78,38 @@ def test_empty_day():
     assert "明天 11/2(一) 沒有要進出場的部位。" in text
 
 
+class FakeCal:
+    """週一到週五都是交易日、年份都算已知。"""
+    def known(self, *days):
+        return True
+
+    def shift(self, d, n):
+        step = 1 if n > 0 else -1
+        while n:
+            d += dt.timedelta(days=step)
+            if d.weekday() < 5:
+                n -= step
+        return d
+
+
+def test_msci_prep_with_effective(monkeypatch):
+    # 美東 11/2(一) 公布 → 台灣 11/3(二) 看到；前一晚 11/2 提醒
+    rows = [{"strategy_code": "msci", "kind": "announce", "event_date": "2026-11-02"},
+            {"strategy_code": "msci", "kind": "effective", "event_date": "2026-11-24"}]
+    monkeypatch.setattr(dp, "supa", lambda *a, **k: rows)
+    out = dp.msci_prep(FakeCal(), dt.date(2026, 11, 2))
+    assert out == ["", "【A04】MSCI 季度調整",
+                   "· 收盤買進：新增成分股（名單填到網站「指數調整」）",
+                   "· 生效日收盤賣：11/24(二)"]
+
+
+def test_msci_prep_without_effective(monkeypatch):
+    rows = [{"strategy_code": "msci", "kind": "announce", "event_date": "2026-11-02"},
+            {"strategy_code": "msci", "kind": "effective", "event_date": "2026-11-03"}]
+    monkeypatch.setattr(dp, "supa", lambda *a, **k: rows)
+    out = dp.msci_prep(FakeCal(), dt.date(2026, 11, 2))
+    assert out[-1] == "· 生效日收盤賣：請對照公告"
+
+
 if __name__ == "__main__":
     print(compose()[0])
