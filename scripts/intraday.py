@@ -147,7 +147,8 @@ def scan010(watch, mk, today, dry):
         px = last_price(x)
         st = limit_up_state(x)
         print(f"010 盯盤 {w['name']}{w['code']} 連{w['streak']} 現價 {px} 漲停 {x.get('u')} 最高 {x.get('h')} "
-              f"{STATE_TXT[st]}")
+              f"{STATE_TXT[st]}｜MIS z={x.get('z')} b={x.get('b')} a={x.get('a')} h={x.get('h')} "
+              f"u={x.get('u')} tlong={x.get('tlong')} state={st}")
         if st == "open" and (dry or once(today, f"010:{w['code']}")):
             u = f(x.get("u"))
             o010.append((f"010:{w['code']}", f"・{w['name']} {w['code']}　連{w['streak']}｜現 {px:g}／停 {u:g}"))
