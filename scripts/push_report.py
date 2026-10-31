@@ -34,6 +34,9 @@ INTRA_010 = "盤中提醒／收盤執行（條件成立才放空）"  # 010 開�
 # 核准版本（測試版本／進出場）。來源：可執行策略總表 1C4NExodXR0EY0zRhiQ4bpuGz7jdfYM_duPX_diFrGwE
 # 分頁 Bot可執行策略 欄 測試版本／進出場；新策略上線要一併補
 APPROVED = {"004": "V02/R02", "010": "V01/R04", "019": "V01/R03"}
+# 週報主旨：Emit 工作手冊 V15 第 9.1 節規定的固定文字，一字不改；手冊改版時同步更新
+PURPOSE = ("本週報目的：紀錄本週實際推播內容，供 Eve 審查推播是否依《可執行策略總表》（核准 V/R 與組合）選出正確股票，"
+           "且進出場推播時間正確。審查發現錯誤時，Emit 修正推播程式，並在本週報以更正註記補正；已送出的推播原文不改寫。")
 LEDGER_COLS = ["策略", "代號", "名稱", "動作", "執行日", "時點", "狀態", "首次推播", "推播類型",
                "LINE回應", "更正", "週報", "核准V/R"]  # 新欄只加在最後，不動 Drive 總表既有欄位
 
@@ -197,6 +200,7 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
     out = []
     w = out.append
     w(f"# 推播紀錄 {start:%Y/%m/%d}～{end:%Y/%m/%d}\n")
+    w(f"{PURPOSE}\n")
     w(f"- 時區：Asia/Taipei（UTC+8）")
     w(f"- 產生時間：{generated:%Y-%m-%d %H:%M}")
     if msgs:
