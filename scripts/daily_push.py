@@ -140,7 +140,7 @@ def block_line(r):
 def watch_lines(watch):
     if not watch:
         return []
-    out = ["", "【010】開板放空（盯盤）"]
+    out = ["", f"【010】開板放空（盯盤）｜{EXIT_HINT['010']}"]
     for w in watch[:10]:
         out.append(f"· 收盤沒鎖漲停放空：{w['name']} {w['code']}")
     if len(watch) > 10:
@@ -336,6 +336,47 @@ TIMING_ORDER = {"開盤": 0, "收盤": 1}
 BLOCK_TIMING = re.compile(r"^(開盤|收盤)(買進|賣出|放空|回補)$")
 
 
+# 標題後的出場提示：照各訊號產生程式實際算出場日的規則（不用 perf.json 的平均持有天數）。
+# 鍵 = 策略代號，或（策略代號, variant）；{x} 依方向換成「賣」（多）或「回補」（空）。
+# 「持有N日」= 進場日算第 1 天。沒列到的（A02 處置注意、A03 庫藏股注意等提醒型板塊）不加。
+EXIT_HINT = {
+    "A01": "開紅盤日開盤賣",                      # calendar_signals：封關日收盤 → 開紅盤日開盤
+    "A02": "處置最後一天收盤賣",                  # disposal_signals
+    "A03": "持有10日收盤賣",                      # buyback_actions（照 signals 的 exit_date）
+    "A06": "新股上市第5日收盤賣",                  # split_signals HOLD=5
+    "A08": "持有5日收盤賣",                       # event_signals：cal.shift(t, 5)
+    "A09": "旬末收盤{x}",                         # calendar_signals：時段最後交易日收盤
+    ("A10", "長榮航冬季"): "隔年1月第8個交易日開盤賣",
+    ("A10", "華航夏季"): "6月第1個交易日收盤賣",
+    "A11": "除權息日收盤賣",                      # exright：原股 T0 收盤
+    ("A11", "大幅除權息・配股"): "配股可賣日收盤賣",  # exright_delivery
+    "004": "持有10日收盤回補",                    # cash_issue HOLD004=10
+    ("009", "雄獅2731"): "8月最後交易日收盤回補",
+    ("009", "燦星旅2719"): "8月最後交易日收盤回補",
+    ("009", "五福2745"): "8月最後交易日收盤回補",
+    ("009", "大立光3008"): "6月最後交易日收盤賣",
+    ("009", "統領2910"): "封關日收盤回補",
+    "010": "隔天收盤回補",                        # event_signals：cal.shift(t, 1)
+    ("014", "持有5日"): "持有5日收盤賣",
+    ("014", "持有15日"): "持有15日收盤賣",
+    "015": "持有3日收盤平倉",                     # calendar_signals.build015：D+1 開盤 → D+3 收盤
+    ("015", "MSCI新增股放空"): "持有3日收盤回補",
+    "017": "隔天開盤回補",                        # cash_issue：D-1 開盤 → D 開盤
+    "019": "持有5日收盤回補",                     # insider HOLD019=5
+    "020": "持有20日收盤賣",                      # event_signals：T+1 開盤 → T+20 收盤
+    "021": "法說日收盤賣",
+}
+# 舊板塊（v_tomorrow）只有買賣型的才有出場規則；處置、庫藏股板塊是提醒型，不加
+BLOCK_HINT = {"msci": "生效日收盤賣", "tw50": "生效日收盤賣"}
+
+
+def exit_hint(r, kind):
+    if kind != "S":
+        return BLOCK_HINT.get(r.get("block_code"))
+    h = EXIT_HINT.get((r["strategy_id"], r.get("variant"))) or EXIT_HINT.get(r["strategy_id"])
+    return h and h.format(x="回補" if r.get("side") == "short" else "賣")
+
+
 def _entry(r, kind):
     """把一列（策略訊號或舊板塊）轉成排版用的資料：只留策略、時點、動作、股票。"""
     if kind == "S":
@@ -343,7 +384,7 @@ def _entry(r, kind):
         # variant 預設是「股名代號」，那種情況不算子策略，同策略的股票併成一組
         var = None if r["variant"] == r["company_name"] + r["company_code"] else r["variant"]
         name = r["strategy_name"] + (f"・{var}" if var else "")
-        return {"g": ("S", sid, var), "title": f"【{sid}】{name}",
+        return {"g": ("S", sid, var), "title": f"【{sid}】{name}", "hint": exit_hint(r, kind),
                 "timing": TIMING.get(r.get("act_timing")), "action": r["action"],
                 "stock": f"{r['company_name']} {r['company_code']}", "row": r}
     code = r.get("block_code")
@@ -355,7 +396,7 @@ def _entry(r, kind):
     if frags and (m := BLOCK_TIMING.match(frags[0])):
         timing, frags = m.group(1), frags[1:]
     stock = f"{r.get('company_name') or ''} {r.get('company_code') or ''}".strip()
-    return {"g": ("B", code), "title": title, "timing": timing, "action": r.get("action") or "注意",
+    return {"g": ("B", code), "title": title, "hint": exit_hint(r, kind), "timing": timing, "action": r.get("action") or "注意",
             "stock": stock or (frags[0] if frags else ""), "row": r}
 
 
@@ -375,7 +416,10 @@ def render_items(tmr, stg):
 
     out = []
     for es in sorted(groups.values(), key=gorder):
-        out += ["", es[0]["title"]]
+        hints = {e["hint"] for e in es}
+        # 同一組規則不一致（如 009 不同股票）或沒有規則：維持原標題
+        hint = hints.pop() if len(hints) == 1 else None
+        out += ["", es[0]["title"] + (f"｜{hint}" if hint else "")]
         for e in sorted(es, key=eorder):
             t, a = e["timing"], e["action"]
             when = f"{t}{a}" if t in TIMING_ORDER else (f"{a}（{t}）" if t else a)

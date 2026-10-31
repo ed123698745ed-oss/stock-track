@@ -1,4 +1,4 @@
-"""LINE 交易提醒精簡格式：【代號】策略名 → 「· 時點動作：股名 代號」，不帶績效、持有、券源等說明。
+"""LINE 交易提醒精簡格式：【代號】策略名｜出場提示 → 「· 時點動作：股名 代號」，不帶績效、券源等說明。
 
 不連網、不碰資料庫：python -m pytest tests/test_push_format.py -q
 """
@@ -54,18 +54,72 @@ def test_header_and_counts():
 
 def test_group_lines():
     text, *_ = compose()
-    want = "【004】菲比斯 630 大額現增放空\n· 開盤放空：東森 2614\n· 收盤回補：源大環能 6639"
+    want = "【004】菲比斯 630 大額現增放空｜持有10日收盤回補\n· 開盤放空：東森 2614\n· 收盤回補：源大環能 6639"
     assert want in text
-    assert "【019】內部人申報轉讓\n· 開盤放空：勝一 1773" in text
+    assert "【019】內部人申報轉讓｜持有5日收盤回補\n· 開盤放空：勝一 1773" in text
+    # 提醒型板塊（處置股注意）沒有出場規則：維持原標題
     assert "【A02】處置股\n· 注意：漢測 7856" in text
-    assert "【010】開板放空（盯盤）\n· 收盤沒鎖漲停放空：群聯 8299" in text
+    assert "【010】開板放空（盯盤）｜隔天收盤回補\n· 收盤沒鎖漲停放空：群聯 8299" in text
 
 
 def test_no_extra_details():
     text, *_ = compose()
-    for bad in ("平均", "持有", "年化", "凱利", "n=", "認購", "繳款", "券源", "月線", "處置期間",
+    for bad in ("平均", "持有10交易日", "年化", "凱利", "n=", "認購", "繳款", "券源", "月線", "處置期間",
                 "出場", "進場", "若有持倉", "績效", "◆", "要做的事"):
         assert bad not in text, bad
+
+
+def title_of(rows, tmr=()):
+    lines, _ = dp.render_items(list(tmr), rows)
+    return [ln for ln in lines if ln.startswith("【")]
+
+
+def test_exit_hint_by_strategy():
+    a08 = srow("A08", "大盤-5%", "加權指數", "TAIEX", "entry", "long", "close")
+    a08["variant"] = "單日≤−5%"
+    assert title_of([a08]) == ["【A08】大盤-5%・單日≤−5%｜持有5日收盤賣"]
+    c010 = srow("010", "連續漲跌停開板反轉", "群聯", "8299", "exit", "short", "close")
+    assert title_of([c010]) == ["【010】連續漲跌停開板反轉｜隔天收盤回補"]
+    c017 = srow("017", "現增上市賣壓與反彈", "某股", "1234", "entry", "short", "open")
+    c017["variant"] = "現增上市放空"
+    assert title_of([c017]) == ["【017】現增上市賣壓與反彈・現增上市放空｜隔天開盤回補"]
+
+
+def test_exit_hint_side_and_variant():
+    # A09 依方向：多 → 賣、空 → 回補
+    up = srow("A09", "台股上中下旬", "加權指數", "TAIEX", "entry", "long", "close")
+    up["variant"] = "十二月下旬"
+    dn = srow("A09", "台股上中下旬", "加權指數", "TAIEX", "entry", "short", "close")
+    dn["variant"] = "十二月中旬"
+    assert title_of([up, dn]) == ["【A09】台股上中下旬・十二月下旬｜旬末收盤賣",
+                                  "【A09】台股上中下旬・十二月中旬｜旬末收盤回補"]
+    # 015 多空配對 → 平倉；新增股放空 → 回補
+    pair = srow("015", "ETF新增及刪除股", "等額買刪除股", "LIST", "entry", "long", "open")
+    pair["variant"] = "MSCI多空"
+    assert title_of([pair])[0].endswith("｜持有3日收盤平倉")
+
+
+def test_exit_hint_mixed_group_keeps_title():
+    # 009 variant＝股名代號，不同股票併同一組；規則不同時不加提示
+    a = srow("009", "產業旺季前預期效應", "雄獅", "2731", "exit", "short", "close")
+    b = srow("009", "產業旺季前預期效應", "大立光", "3008", "exit", "long", "close")
+    assert title_of([a]) == ["【009】產業旺季前預期效應｜8月最後交易日收盤回補"]
+    assert title_of([a, b]) == ["【009】產業旺季前預期效應"]
+
+
+def test_exit_hint_blocks():
+    msci = {"block": "MSCI調整", "block_code": "msci", "action": "賣出", "company_name": "台積電",
+            "company_code": "2330", "detail": "收盤賣出", "due_label": "明天"}
+    assert title_of([], [msci]) == ["【A04】MSCI調整｜生效日收盤賣"]
+    other = {"block": "IPO", "block_code": "ipo", "action": "注意", "company_name": "X", "company_code": "1"}
+    assert title_of([], [other]) == ["【IPO】"]
+
+
+def test_exit_hint_keys_exist():
+    # 提示表的策略代號都要在 perf.json 找得到（防打錯字）
+    import perf
+    for k in dp.EXIT_HINT:
+        assert (k[0] if isinstance(k, tuple) else k) in perf.STRATS, k
 
 
 def test_all_rows_shown():
