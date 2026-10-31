@@ -121,7 +121,8 @@ def test_expected_appendix():
     assert "口徑" in md and "已推列數" in md and "應推數" in md
     assert ("| 004 | 2330 | 甲公司 | 買進 | 2026-10-29 | 開盤 | 10/28 19:00～10/29 08:30 "
             "| 004｜2330｜買進｜2026-10-29 | 2026-10-28 19:30 |") in md
-    assert "| 010 | 8299 | 測試 | 放空 | 2026-10-28 | 收盤 | 10/27 19:00～10/28 08:30 | 010｜8299｜放空｜2026-10-28 | 2026-10-28 13:05 |" in md
+    assert ("| 010 | 8299 | 測試 | 放空 | 2026-10-28 | 收盤 | 10/28 盤中～13:30 收盤前（010 盤中通知例外） "
+            "| 010｜8299｜放空｜2026-10-28 | 2026-10-28 13:05 |") in md
     assert "| 019 | 1101 | 丙公司 | 賣出 | 2026-10-29 | 收盤 | 10/28 19:00～10/29 08:30 | 019｜1101｜賣出｜2026-10-29 | ⚠漏推 |" in md
     tail = md.split("未列入應推")[-1]
     assert "6999" in tail and "IPO・舊板塊無應推表" in tail
@@ -143,6 +144,20 @@ def test_expected_appendix_hidden_note():
     md = pr.expected_appendix(exp, rows, D("2026-10-25"), prev_day, (D("2026-10-24"), D("2026-11-02")))
     assert "| 019｜1101｜賣出｜2026-10-29 | ⚠漏推（網站隱藏，非取消） |" in md
     assert "| 004｜2330｜買進｜2026-10-29 | 2026-10-28 19:30 |" in md
+
+
+def test_expected_appendix_010_short_window():
+    exp = [{"strategy_id": "010", "company_code": "8099", "company_name": "空", "action": "放空",
+            "act_date": "2026-10-30", "act_timing": "close"},
+           {"strategy_id": "010", "company_code": "8098", "company_name": "開", "action": "開板放空",
+            "act_date": "2026-10-30", "act_timing": "close"},
+           {"strategy_id": "004", "company_code": "2330", "company_name": "甲", "action": "買進",
+            "act_date": "2026-10-30", "act_timing": "close"}]
+    md = pr.expected_appendix(exp, [], D("2026-10-25"), prev_day, (D("2026-10-24"), D("2026-11-02")))
+    assert "| 10/30 盤中～13:30 收盤前（010 盤中通知例外） | 010｜8099｜放空｜2026-10-30 |" in md
+    assert "| 10/30 盤中～13:30 收盤前（010 盤中通知例外） | 010｜8098｜放空｜2026-10-30 |" in md
+    assert "| 10/29 19:00～10/30 08:30 | 004｜2330｜買進｜2026-10-30 |" in md
+    assert md.count("010 盤中通知例外") == 2
 
 
 def test_expected_appendix_intraday_unmatched():
