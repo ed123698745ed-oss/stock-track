@@ -14,7 +14,9 @@
 import datetime as dt
 import json
 import os
+import pathlib
 import re
+import sys
 
 from calendar_signals import Cal, leg, supa
 from cash_issue import _get
@@ -36,26 +38,66 @@ def roc8(s):
     return dt.date(int(s[:-4]) + 1911, int(s[-4:-2]), int(s[-2:]))
 
 
-def events():
-    """[{code, name, t0, cash, stock, sub, sub_px}]；欄位空白當 0，認購價未公告 → None。"""
-    out = []
-    tw = json.loads(_get("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL", hdr={"Accept": "application/json"}))
-    for r in tw:
-        out.append({"code": r["Code"].strip(), "name": r["Name"].strip(), "t0": roc8(r["Date"]),
-                    "cash": r["CashDividend"], "stock": r["StockDividendRatio"],
-                    "sub": r["SubscriptionRatio"], "sub_px": r["SubscriptionPricePerShare"]})
-    tp = json.loads(_get("https://www.tpex.org.tw/openapi/v1/tpex_exright_prepost", hdr={"Accept": "application/json"}))
-    for r in tp:
-        out.append({"code": r["SecuritiesCompanyCode"].strip(), "name": r["CompanyName"].strip(),
-                    "t0": roc8(r["ExRrightsExDividendDate"]), "cash": r["CashDividend"],
-                    "stock": r["StockDividendRatio"], "sub": r["SubscriptionRatioToNewSharesIssued"],
-                    "sub_px": r["SubscriptionPricePerShare"]})
+SOURCES = {"twse": "上市", "tpex": "上櫃"}
+
+
+def _rows(body):
+    """預告表回應 → list；不是 JSON 陣列（被擋時回 HTML、錯誤訊息物件）當解析失敗，交給 _get 重試。"""
+    j = json.loads(body)
+    if not isinstance(j, list):
+        raise ValueError(f"預期 JSON 陣列，收到 {type(j).__name__}")
+    return j
+
+
+def _twse():
+    return [{"code": r["Code"].strip(), "name": r["Name"].strip(), "t0": roc8(r["Date"]),
+             "cash": r["CashDividend"], "stock": r["StockDividendRatio"],
+             "sub": r["SubscriptionRatio"], "sub_px": r["SubscriptionPricePerShare"]}
+            for r in _get("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL",
+                          hdr={"Accept": "application/json"}, parse=_rows)]
+
+
+def _tpex():
+    return [{"code": r["SecuritiesCompanyCode"].strip(), "name": r["CompanyName"].strip(),
+             "t0": roc8(r["ExRrightsExDividendDate"]), "cash": r["CashDividend"],
+             "stock": r["StockDividendRatio"], "sub": r["SubscriptionRatioToNewSharesIssued"],
+             "sub_px": r["SubscriptionPricePerShare"]}
+            for r in _get("https://www.tpex.org.tw/openapi/v1/tpex_exright_prepost",
+                          hdr={"Accept": "application/json"}, parse=_rows)]
+
+
+def events(failed=None):
+    """[{code, name, t0, cash, stock, sub, sub_px}]；欄位空白當 0，認購價未公告 → None。
+    上市、上櫃各自抓：一邊失敗不影響另一邊，失敗的來源（twse／tpex）記到 failed；
+    沒給 failed 且兩邊都失敗才丟例外。"""
+    out, err = [], None
+    for src, fetch in (("twse", _twse), ("tpex", _tpex)):
+        try:
+            out += fetch()
+        except Exception as e:
+            err = e
+            print(f"  {SOURCES[src]}除權息預告表抓取失敗：{type(e).__name__}: {str(e)[:200]}")
+            if failed is not None:
+                failed.append(src)
+    if failed is None and err is not None and not out:
+        raise err
     for e in out:
         for k in ("cash", "stock", "sub"):
             v = str(e[k]).strip()
             e[k] = 0.0 if v in ("", "-") else num(v)  # 「尚未公告」→ None
         e["sub_px"] = 0.0 if not e["sub"] else num(e["sub_px"])
     return out
+
+
+def write_status(today, failed):
+    """這一輪哪些來源失敗 → out/exright_status.json，給 daily_push.py 判斷警告要怎麼寫。"""
+    try:
+        d = pathlib.Path(__file__).resolve().parent.parent / "out"
+        d.mkdir(exist_ok=True)
+        (d / "exright_status.json").write_text(
+            json.dumps({"d": today.isoformat(), "failed": failed}, ensure_ascii=False), "utf-8")
+    except Exception as e:
+        print(f"⚠ A11 狀態檔寫入失敗：{e}")
 
 
 def face_values():
@@ -76,7 +118,9 @@ def main():
     dry = os.environ.get("DRY_RUN") == "1"
     today = dt.datetime.now(TPE).date()
     cal = Cal([dt.date.fromisoformat(r["market_date"]) for r in supa("holidays?select=market_date&limit=5000")])
-    evs = [e for e in events() if e["t0"] > today and cal.known(e["t0"])]
+    failed = []
+    evs = [e for e in events(failed) if e["t0"] > today and cal.known(e["t0"])]
+    write_status(today, failed)
     print(f"預告表未來除權息 {len(evs)} 筆")
     need = {cal.shift(e["t0"], -6) for e in evs}
     closes = {}
@@ -132,11 +176,24 @@ def main():
 
     if dry:
         print(f"DRY_RUN：不寫入（{len(rows)} 列）")
-        return
-    if rows:
-        supa("strategy_actions?on_conflict=strategy_id,variant,company_code,cycle,role",
-             "POST", rows, prefer="resolution=merge-duplicates,return=minimal")
-    print(f"已寫入 {len(rows)} 列")
+    else:
+        if rows:
+            supa("strategy_actions?on_conflict=strategy_id,variant,company_code,cycle,role",
+                 "POST", rows, prefer="resolution=merge-duplicates,return=minimal")
+        print(f"已寫入 {len(rows)} 列")
+        # 當天成功標記：同一天稍晚重跑（補推）抓失敗時，daily_push.py 看到這個就不再推「抓取失敗」警告。
+        # T-6 收盤（今天）還沒進資料庫時不記：那一輪的試算不完整，之後重跑失敗仍要警告。
+        ok = [src for src in SOURCES if src not in failed]
+        if ok and all(d in closes for d in need if d <= today):
+            try:
+                supa("intraday_alerts?on_conflict=d,key", "POST",
+                     [{"d": today.isoformat(), "key": f"ok:A11:{src}"} for src in ok],
+                     prefer="resolution=ignore-duplicates,return=minimal")
+            except Exception as e:
+                print(f"⚠ A11 成功標記寫入失敗：{e}")
+    if failed:
+        print(f"{'、'.join(SOURCES[x] for x in failed)}除權息預告表抓取失敗（另一邊照常試算）")
+        sys.exit(1)  # 讓 workflow 的 EXRIGHT_OUTCOME 變 failure，推播帶警告
 
 
 if __name__ == "__main__":

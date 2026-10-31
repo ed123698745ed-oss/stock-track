@@ -21,6 +21,7 @@ import pathlib
 import re
 import ssl
 import time
+import urllib.error
 import urllib.request
 
 from calendar_signals import Cal, leg, supa
@@ -46,17 +47,36 @@ _op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookie
                                   urllib.request.HTTPSHandler(context=_ctx))
 
 
-def _get(url, data=None, hdr=None, tries=3):
+def _get(url, data=None, hdr=None, tries=3, parse=None):
+    """抓網頁，失敗重試（間隔 5、10 秒…）。parse：解析回應內容的函式（例如 json.loads），
+    有給就連「空白回應、2xx 但不是 JSON」這類解析失敗也重試，回傳解析結果。
+    每次失敗都印 HTTP 狀態、Content-Type、內容前 200 字，事後查得出是被擋還是改版。"""
     h = {"User-Agent": UA}
     h.update(hdr or {})
     last = None
     for i in range(tries):  # MOPS 偶爾逾時，重試
+        status = ctype = body = None
         try:
             with _op.open(urllib.request.Request(url, data=data, headers=h), timeout=40) as r:
-                return r.read().decode("utf-8", "replace")
+                status, ctype = getattr(r, "status", None), r.headers.get("Content-Type")
+                body = r.read().decode("utf-8", "replace")
+            if parse is None:
+                return body
+            if not body.strip():
+                raise ValueError("回應是空白")
+            return parse(body)
         except Exception as e:
+            if isinstance(e, urllib.error.HTTPError):
+                status, ctype = e.code, e.headers.get("Content-Type") if e.headers else None
+                try:
+                    body = e.read().decode("utf-8", "replace")
+                except Exception:
+                    pass
             last = e
-            time.sleep(5 * (i + 1))
+            print(f"  抓取失敗（第 {i + 1}/{tries} 次）{url}：{type(e).__name__}: {str(e)[:120]}"
+                  f"｜HTTP {status}｜Content-Type {ctype}｜內容 {(body or '')[:200]!r}")
+            if i < tries - 1:
+                time.sleep(5 * (i + 1))
     raise last
 
 

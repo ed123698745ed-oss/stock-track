@@ -553,6 +553,28 @@ def index_review_notice(today):
     return out
 
 
+A11_SRC = {"twse": "上市", "tpex": "上櫃"}
+
+
+def exright_warning(today):
+    """A11（exright.py）失敗時的警告。今天稍早已成功跑過的來源（intraday_alerts 的 ok:A11:<來源>）
+    不再警告：補推重跑時預告表偶爾抓不到，訊號早已寫入，不必推「抓取失敗」。
+    只有一邊失敗 → 警告寫明上市或上櫃；兩邊都失敗（或不知道哪邊）→ 原本的警告。"""
+    st = read_out("exright_status.json") or {}
+    failed = st.get("failed") if st.get("d") == today.isoformat() else None
+    failed = [x for x in (failed or A11_SRC) if x in A11_SRC]  # 狀態檔沒寫或空的（中途當掉）→ 兩邊都算失敗
+    ok, _ = safe(lambda: {x["key"] for x in supa(f"intraday_alerts?select=key&d=eq.{today.isoformat()}"
+                                                 "&key=like.ok:A11:*")})
+    left = [x for x in failed if f"ok:A11:{x}" not in (ok or set())]
+    if not left:
+        print("A11 這一輪失敗，但今天稍早已成功試算過，不推抓取失敗警告")
+        return None
+    if len(left) == len(A11_SRC):
+        return "除權息預告表抓取失敗，A11 今天可能漏掉 T-5 進場的訊號"
+    m = A11_SRC[left[0]]
+    return f"{m}除權息預告表抓取失敗，A11 今天可能漏掉{m} T-5 進場的訊號"
+
+
 def market_problems(today, cal):
     """行情資料狀態 → 警告文字。沒抓到和沒訊號要分得出來。"""
     out = []
@@ -570,7 +592,9 @@ def market_problems(today, cal):
     if os.environ.get("DISPOSAL_OUTCOME", "success") != "success":
         out.append("處置股訊號更新失敗，A02 今天可能漏掉新處置（明天會再算最近 30 天）")
     if os.environ.get("EXRIGHT_OUTCOME", "success") != "success":
-        out.append("除權息預告表抓取失敗，A11 今天可能漏掉 T-5 進場的訊號")
+        w = exright_warning(today)
+        if w:
+            out.append(w)
     if cal:
         out += unregistered_closures(cal, today)
     out += index_review_notice(today)
