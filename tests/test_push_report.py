@@ -206,3 +206,15 @@ def test_intraday_message_has_site_link(monkeypatch):
     assert text.endswith("以收盤為準，晚上推播會記錄是否成立。\n\n" + SITE)
     items, _, _ = pr.parse(text)
     assert [(i["code"], i["timing"]) for i in items] == [("8299", "盤中")]
+
+
+def test_render_purpose_first_paragraph():
+    # 手冊 V15 9.1：標題後第一段就是主旨，後面才是時區等資訊；空週也要有
+    for msgs in (MSGS, []):
+        md = pr.render(msgs, D("2026-10-24"), D("2026-10-31"), dt.datetime(2026, 10, 31, 9, tzinfo=pr.TPE))
+        lines = [x for x in md.split("\n") if x.strip()]
+        assert lines[0].startswith("# 推播紀錄")
+        assert lines[1] == pr.PURPOSE
+        assert lines[2].startswith("- 時區")
+    assert pr.PURPOSE.startswith("本週報目的：紀錄本週實際推播內容")
+    assert pr.PURPOSE.endswith("已送出的推播原文不改寫。")

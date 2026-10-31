@@ -18,3 +18,4 @@ jobs:
       - run: python3 tests/test_009.py
       - run: python3 tests/test_split.py
       - run: python3 tests/test_split_classify.py
+      - run: pip install -q pytest && python3 -m pytest -q tests/test_push_report.py
