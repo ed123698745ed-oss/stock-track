@@ -277,6 +277,15 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
     return "\n".join(out)
 
 
+def is_cancelled(a):
+    """strategy_actions 列是否為真正取消（不列應推）。
+
+    網站「忽略」按鈕寫 ignored=true + checked=true，只隱藏、不代表策略取消，仍要推；
+    cash_issue.py／buyback_actions.py 等腳本取消時只寫 ignored=true（checked=false）。
+    """
+    return bool(a.get("ignored")) and not a.get("checked")
+
+
 def recon_key(strategy, code, action, act_date):
     """對帳鍵 策略|代號|動作|執行日；010 開板放空（盤中提醒）以收盤放空計。"""
     return (strategy, code, ALIAS.get(action, action), act_date)
@@ -380,7 +389,7 @@ def expected_appendix(expected, rows, check_from, push_day, act_range):
         out.append(f"| {e['strategy_id']} | {e['company_code']} | {e.get('company_name') or ''} | {e['action']} "
                    f"| {e['act_date']} | {TIMING.get(e.get('act_timing'), '')} "
                    f"| {push_day(ad):%m/%d} 19:00～{ad:%m/%d} 08:30 | {'｜'.join(k)} "
-                   f"| {pushed.get(k) or '⚠漏推'} |")
+                   f"| {pushed.get(k) or '⚠漏推'}{'（網站隱藏，非取消）' if e.get('hidden') else ''} |")
     out.append("")
     sids = {e["strategy_id"] for e in expected}
     extra = []

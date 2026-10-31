@@ -17,7 +17,7 @@ import json
 import os
 
 from calendar_signals import Cal, supa
-from push_report import LEDGER_COLS, TPE, expected_appendix, ledger, load_prior, render
+from push_report import LEDGER_COLS, TPE, expected_appendix, is_cancelled, ledger, load_prior, render
 
 now = dt.datetime.now(TPE)
 today = now.date()
@@ -40,15 +40,20 @@ first = supa("push_messages?select=sent_at&order=sent_at&limit=1") or []
 log_start = dt.datetime.fromisoformat(first[0]["sent_at"].replace("Z", "+00:00")).astimezone(TPE).date() if first else today
 check_from = max(start, log_start)
 upper = cal.shift(last_push_day, 1)
-acts = supa(f"strategy_actions?select=strategy_id,company_code,company_name,role,side,act_date,act_timing"
-            f"&ignored=eq.false&act_date=gt.{start.isoformat()}&act_date=lte.{upper.isoformat()}") or []
+acts = supa(f"strategy_actions?select=strategy_id,company_code,company_name,role,side,act_date,act_timing,ignored,checked"
+            f"&act_date=gt.{start.isoformat()}&act_date=lte.{upper.isoformat()}") or []
 ACT = {("entry", "long"): "買進", ("exit", "long"): "賣出", ("entry", "short"): "放空", ("exit", "short"): "回補"}
 expected = []
+# 網站隱藏（ignored+checked）仍算應推，只排除真正取消
 for a in acts:
+    if is_cancelled(a):
+        continue
     d = dt.date.fromisoformat(a["act_date"])
     push_day = cal.shift(d, -1)
     if check_from <= push_day <= last_push_day:
-        expected.append(dict(a, action=ACT[(a["role"], a["side"])], push_day=push_day.isoformat()))
+        hidden = bool(a.pop("ignored"))
+        a.pop("checked")
+        expected.append(dict(a, action=ACT[(a["role"], a["side"])], push_day=push_day.isoformat(), hidden=hidden))
 
 # 主推播時間檢查（2026-10-25 加；同日依 Ema 覆核改以「目標交易日」判斷）
 # ⑦ 主推播送出時間不在台北 19:00～23:59（排程延遲跨午夜、手動補推等），列出供人工確認
