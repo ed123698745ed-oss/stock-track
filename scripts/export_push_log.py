@@ -4,9 +4,11 @@
 應在本期主推播提醒（執行日的前一個交易日 ∈ 本期，且推播時間已過）卻沒推出的項目列「⚠ 漏推」。
 舊板塊（IPO、處置股等 v_tomorrow）沒有獨立的應推清單，只列已推項目。
 
-DAYS=7（預設）。輸出：
+DAYS=7（預設）。PRIOR_LEDGER=上週 ledger.json／CSV 路徑（選填）：本週再提醒的項目沿用上週首次推播與更正。
+輸出：
   report.md   週報（依執行日）
   ledger.json 依策略排序的總表列（Drive《推播總表》追加用）
+  expected.json strategy_actions 應推清單（含 push_day；report.md 附錄「應推對帳快照」的來源）
   raw.json    RAW=1 時另存原文
 GitHub Actions 會把這些檔推到暫存分支 tmp-push-export，給連不到 Actions 日誌的環境取用。
 """
@@ -15,7 +17,7 @@ import json
 import os
 
 from calendar_signals import Cal, supa
-from push_report import LEDGER_COLS, TPE, ledger, render
+from push_report import LEDGER_COLS, TPE, expected_appendix, ledger, load_prior, render
 
 now = dt.datetime.now(TPE)
 today = now.date()
@@ -46,7 +48,7 @@ for a in acts:
     d = dt.date.fromisoformat(a["act_date"])
     push_day = cal.shift(d, -1)
     if check_from <= push_day <= last_push_day:
-        expected.append(dict(a, action=ACT[(a["role"], a["side"])]))
+        expected.append(dict(a, action=ACT[(a["role"], a["side"])], push_day=push_day.isoformat()))
 
 # 主推播時間檢查（2026-10-25 加；同日依 Ema 覆核改以「目標交易日」判斷）
 # ⑦ 主推播送出時間不在台北 19:00～23:59（排程延遲跨午夜、手動補推等），列出供人工確認
@@ -74,14 +76,18 @@ while d <= last_push_day:
     d += dt.timedelta(days=1)
 
 name = f"推播紀錄_{start:%Y%m%d}～{today:%Y%m%d}"
-rows, missed = ledger(msgs, expected, name)
-report = render(msgs, start, today, now, missed=missed, push_alerts=push_alerts,
+prior_path = os.environ.get("PRIOR_LEDGER")
+prior = load_prior(prior_path) if prior_path and os.path.exists(prior_path) else None
+rows, missed = ledger(msgs, expected, name, prior)
+appendix = expected_appendix(expected, rows, check_from, lambda x: cal.shift(x, -1), (start, upper))
+report = render(msgs, start, today, now, missed=missed, push_alerts=push_alerts, appendix=appendix,
                 check_note=f"漏推對帳範圍：主推播日 {check_from:%m/%d}～{last_push_day:%m/%d}（推播入庫起日 {log_start:%Y-%m-%d}），"
                            f"策略訊號應推 {len(expected)} 項、漏推 {len(missed)} 項；IPO、舊板塊沒有應推清單，只列已推項目")
 open("report.md", "w", encoding="utf-8").write(report)
 json.dump({"name": name, "columns": LEDGER_COLS, "rows": [[r[c] for c in LEDGER_COLS] for r in rows],
            "missed": len(missed), "expected": len(expected), "push_alerts": push_alerts, "check_from": check_from.isoformat()},
           open("ledger.json", "w", encoding="utf-8"), ensure_ascii=False)
+json.dump(expected, open("expected.json", "w", encoding="utf-8"), ensure_ascii=False)
 print("===BEGIN===")
 print(report)
 print("===END===")

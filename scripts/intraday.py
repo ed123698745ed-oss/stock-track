@@ -19,7 +19,7 @@ import urllib.request
 
 from calendar_signals import Cal, supa
 import perf
-from daily_push import push_line
+from daily_push import push_line, site
 from event_signals import C014_GAP, watch010
 
 TPE = dt.timezone(dt.timedelta(hours=8))
@@ -221,7 +221,8 @@ def main():
             f"◆ 開板放空 {len(o010)} 檔（盤中未鎖漲停）",
             "　收盤仍沒漲停 → 收盤放空，下一交易日收盤回補（先確認券源）"] + [ln for _, ln in o010]))
     text = (f"⚡ 盤中提醒 {now:%m/%d %H:%M}\n\n" + "\n\n".join(blocks)
-            + "\n\n以收盤為準，晚上推播會記錄是否成立。")
+            + "\n\n以收盤為準，晚上推播會記錄是否成立。"
+            + "\n\n" + site(today))
     print(text)
     if dry:
         print("\nDRY_RUN：不推送")

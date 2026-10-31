@@ -30,8 +30,12 @@ SUB = re.compile(r"^◆ (開盤|收盤)?(\S+?)(?:（[^）]*）)? \d+ 檔")
 ITEM2 = re.compile(r"^・(.+?) (\w+)(?:　(.*))?$")
 
 ALIAS = {"開板放空": "放空"}  # 010 盤中提醒的動作名稱
+INTRA_010 = "盤中提醒／收盤執行（條件成立才放空）"  # 010 開板放空：盤中只是提醒，收盤仍沒漲停才放空
+# 核准版本（測試版本／進出場）。來源：可執行策略總表 1C4NExodXR0EY0zRhiQ4bpuGz7jdfYM_duPX_diFrGwE
+# 分頁 Bot可執行策略 欄 測試版本／進出場；新策略上線要一併補
+APPROVED = {"004": "V02/R02", "010": "V01/R04", "019": "V01/R03"}
 LEDGER_COLS = ["策略", "代號", "名稱", "動作", "執行日", "時點", "狀態", "首次推播", "推播類型",
-               "LINE回應", "更正", "週報"]
+               "LINE回應", "更正", "週報", "核准V/R"]  # 新欄只加在最後，不動 Drive 總表既有欄位
 
 
 def tpe(ts):
@@ -99,6 +103,14 @@ def parse(text):
 
 def key(it):
     return (it["strategy"], it["code"], it["action"])
+
+
+def timing_label(it):
+    return INTRA_010 if it["timing"] == "盤中" and it["action"] == "開板放空" else it["timing"]
+
+
+def approved(sid):
+    return APPROVED.get(sid, "待補／見策略總表")
 
 
 def prepare(messages):
@@ -178,7 +190,8 @@ def fix_note(f, d):
     return note
 
 
-def render(messages, start, end, generated, ledger_url=None, missed=None, check_note=None, push_alerts=None):
+def render(messages, start, end, generated, ledger_url=None, missed=None, check_note=None, push_alerts=None,
+           appendix=None):
     msgs = prepare(messages)
     days = build_days(msgs)
     out = []
@@ -243,7 +256,7 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
         for n, it in enumerate(info["rows"].values(), 1):
             f = fixed.get(key(it))
             note = fix_note(f, d) if f else it["detail"]
-            w(f"| {n} | {it['strategy']} | {it['name']} {it['code']} | {it['action']} | {it['timing']} | {note} | {it['src']} |")
+            w(f"| {n} | {it['strategy']} | {it['name']} {it['code']} | {it['action']} | {timing_label(it)} | {note} | {it['src']} |")
         w("")
         orphan = [f for k, f in fixed.items() if k not in info["rows"]]
         if orphan:
@@ -255,6 +268,8 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
             w("盯盤（010 開板放空）：" + "、".join(f"{x['name']} {x['code']}（{x['detail']}）"
                                           for x in info["watch"].values()) + "\n")
 
+    if appendix:
+        w(appendix)
     w("## 附錄：訊息原文\n")
     for m in sorted(msgs, key=lambda x: x["sent"]):
         w(f"### {m['sent']:%m/%d %H:%M}｜{MODE.get(m['mode'], m['mode'])}｜LINE {m['status']}\n")
@@ -262,13 +277,20 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
     return "\n".join(out)
 
 
-def ledger(messages, expected=(), report_name=""):
+def recon_key(strategy, code, action, act_date):
+    """對帳鍵 策略|代號|動作|執行日；010 開板放空（盤中提醒）以收盤放空計。"""
+    return (strategy, code, ALIAS.get(action, action), act_date)
+
+
+def ledger(messages, expected=(), report_name="", prior=None):
     """依策略排序的明細列（LEDGER_COLS），以及漏推清單。
 
     expected：strategy_actions 中「推播時間已過」的應推項目
       （strategy_id, company_code, company_name, action, act_date, act_timing）。
     已推送列狀態為「已推播」或「已推播（已更正）」；應推但沒推的列為「⚠ 漏推」。
+    prior：上週總表列 {(策略, 代號, 動作, 執行日): 列}；本週再提醒同一項時沿用上週首次推播與更正。
     """
+    prior = prior or {}
     days = build_days(prepare(messages))
     rows, pushed = [], set()
     for d, info in days.items():
@@ -285,23 +307,103 @@ def ledger(messages, expected=(), report_name=""):
                 status = "已推播（補出場日）" if kind == "補出場日" else "已推播（已更正）"
             if it["status"] != 200:
                 status = f"⚠ LINE 回應 {it['status']}"
+            sent, week = f"{it['sent']:%Y-%m-%d %H:%M}", report_name
+            p = prior.get((it["strategy"], it["code"], it["action"], act_day.isoformat()))
+            if p:  # 跨週延續：上週已推、本週再提醒
+                sent = min(x for x in (p.get("首次推播"), sent) if x)
+                fix_txt = "延續上週：" + ("；".join(x for x in (p.get("更正"), fix_txt) if x) or "無更正")
+                status += "（延續上週再提醒）"
+                week = f"{p.get('週報', '')}；{report_name}（延續上週＋本週再提醒，本週送出 {it['sent']:%Y-%m-%d %H:%M}）"
             rows.append({"策略": it["strategy"], "代號": it["code"], "名稱": it["name"], "動作": it["action"],
-                         "執行日": act_day.isoformat(), "時點": it["timing"], "狀態": status,
-                         "首次推播": f"{it['sent']:%Y-%m-%d %H:%M}", "推播類型": it["src"].split(" ")[0],
-                         "LINE回應": it["status"], "更正": fix_txt, "週報": report_name})
-            pushed.add((it["strategy"], it["code"], ALIAS.get(it["action"], it["action"])))
+                         "執行日": act_day.isoformat(), "時點": timing_label(it), "狀態": status,
+                         "首次推播": sent, "推播類型": it["src"].split(" ")[0],
+                         "LINE回應": it["status"], "更正": fix_txt, "週報": week, "核准V/R": approved(it["strategy"])})
+            pushed.add(recon_key(it["strategy"], it["code"], it["action"], act_day.isoformat()))
     missed = []
     for e in expected:
-        k = (e["strategy_id"], e["company_code"], e["action"])
-        if k in pushed:
+        if recon_key(e["strategy_id"], e["company_code"], e["action"], e["act_date"]) in pushed:
             continue
         r = {"策略": e["strategy_id"], "代號": e["company_code"], "名稱": e["company_name"], "動作": e["action"],
              "執行日": e["act_date"], "時點": TIMING.get(e.get("act_timing"), ""), "狀態": "⚠ 漏推",
-             "首次推播": "", "推播類型": "", "LINE回應": "", "更正": "", "週報": report_name}
+             "首次推播": "", "推播類型": "", "LINE回應": "", "更正": "", "週報": report_name,
+             "核准V/R": approved(e["strategy_id"])}
         missed.append(r)
         rows.append(r)
     rows.sort(key=lambda r: (r["策略"], r["執行日"], r["代號"], r["動作"]))
     return rows, missed
+
+
+def load_prior(path):
+    """上週總表列（ledger.json 的 columns+rows、列 dict 的 JSON 陣列，或 CSV）→ {(策略, 代號, 動作, 執行日): 列}。
+    同鍵多列取首次推播最早的一列；已漏推的列不算推過。"""
+    import csv
+    if path.lower().endswith(".csv"):
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            rs = list(csv.DictReader(fh))
+    else:
+        d = json.load(open(path, encoding="utf-8"))
+        rs = [dict(zip(d["columns"], r)) for r in d["rows"]] if isinstance(d, dict) else d
+    out = {}
+    for r in rs:
+        if not r.get("首次推播"):
+            continue
+        k = (r["策略"], str(r["代號"]), r["動作"], r["執行日"])
+        if k not in out or r["首次推播"] < out[k]["首次推播"]:
+            out[k] = r
+    return out
+
+
+def expected_appendix(expected, rows, check_from, push_day, act_range):
+    """應推對帳快照：strategy_actions 應推項目逐項對到總表列；再列出總表有、應推清單沒有的列與理由。
+
+    expected 每項需有 act_date；push_day(date) → 應推主推播日（執行日前一交易日）。
+    rows：ledger() 的列（含漏推列）。act_range=(lo, hi)：strategy_actions 查詢範圍 lo < act_date ≤ hi。
+    """
+    pushed = {}
+    for r in rows:
+        if r["狀態"] != "⚠ 漏推":
+            k = recon_key(r["策略"], r["代號"], r["動作"], r["執行日"])
+            pushed[k] = min(pushed.get(k) or r["首次推播"], r["首次推播"])
+    out = ["## 附錄：應推對帳快照（strategy_actions）\n",
+           "口徑：「已推列數」是《推播總表》本期已推播的列（同一 策略｜代號｜動作｜執行日 只算一列，"
+           "含 010 盤中提醒、IPO／舊板塊、跨週延續等不在應推清單的項目）；「應推數」只算 strategy_actions 中"
+           f"主推播日落在 {check_from:%m/%d} 起、且推播時間已過的策略訊號。兩者口徑不同，數字不必相等，"
+           "差額逐項列在下方「未列入應推」。\n",
+           f"應推 {len(expected)} 項：\n",
+           "| 策略 | 代號 | 名稱 | 動作 | 執行日 | 時點 | 應推時段 | 對帳鍵 | 對應推播 |",
+           "|---|---|---|---|---|---|---|---|---|"]
+    keys = set()
+    for e in sorted(expected, key=lambda e: (e["act_date"], e["strategy_id"], e["company_code"])):
+        ad = dt.date.fromisoformat(e["act_date"])
+        k = recon_key(e["strategy_id"], e["company_code"], e["action"], e["act_date"])
+        keys.add(k)
+        out.append(f"| {e['strategy_id']} | {e['company_code']} | {e.get('company_name') or ''} | {e['action']} "
+                   f"| {e['act_date']} | {TIMING.get(e.get('act_timing'), '')} "
+                   f"| {push_day(ad):%m/%d} 19:00～{ad:%m/%d} 08:30 | {'｜'.join(k)} "
+                   f"| {pushed.get(k) or '⚠漏推'} |")
+    out.append("")
+    sids = {e["strategy_id"] for e in expected}
+    extra = []
+    for r in rows:
+        if r["狀態"] == "⚠ 漏推" or recon_key(r["策略"], r["代號"], r["動作"], r["執行日"]) in keys:
+            continue
+        ad = dt.date.fromisoformat(r["執行日"])
+        if r["時點"] == INTRA_010:
+            why = "盤中提醒（010 開板放空提醒，執行屬收盤放空，對帳鍵以收盤放空計）"
+        elif push_day(ad) < check_from or not act_range[0] < ad <= act_range[1]:
+            why = "跨週延續（執行日的應推推播日早於本期起日，或執行日不在查詢範圍）"
+        elif r["策略"] == "IPO" or r["策略"] not in sids:
+            why = "IPO・舊板塊無應推表"
+        else:
+            why = "應推清單無此項（待查：執行日或動作與 strategy_actions 不一致）"
+        extra.append(f"| {r['策略']} | {r['代號']} | {r['名稱']} | {r['動作']} | {r['執行日']} | {r['時點']} "
+                     f"| {r['首次推播']} | {why} |")
+    out.append(f"未列入應推（總表已推、應推清單沒有）{len(extra)} 列：\n")
+    if extra:
+        out += ["| 策略 | 代號 | 名稱 | 動作 | 執行日 | 時點 | 首次推播 | 未列入應推理由 |",
+                "|---|---|---|---|---|---|---|---|"] + extra
+    out.append("")
+    return "\n".join(out)
 
 
 if __name__ == "__main__":
