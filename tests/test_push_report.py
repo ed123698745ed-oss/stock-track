@@ -129,6 +129,22 @@ def test_expected_appendix():
     assert "8299" not in tail  # 已對上收盤放空
 
 
+def test_is_cancelled():
+    assert not pr.is_cancelled({"ignored": False, "checked": False})
+    assert not pr.is_cancelled({"ignored": False, "checked": True})
+    assert not pr.is_cancelled({"ignored": True, "checked": True})  # 網站隱藏，非取消
+    assert pr.is_cancelled({"ignored": True, "checked": False})  # 腳本取消
+    assert pr.is_cancelled({"ignored": True, "checked": None})
+
+
+def test_expected_appendix_hidden_note():
+    rows, _ = pr.ledger(MSGS, EXPECTED, "週報A")
+    exp = [dict(e, hidden=e["company_code"] == "1101") for e in EXPECTED]
+    md = pr.expected_appendix(exp, rows, D("2026-10-25"), prev_day, (D("2026-10-24"), D("2026-11-02")))
+    assert "| 019｜1101｜賣出｜2026-10-29 | ⚠漏推（網站隱藏，非取消） |" in md
+    assert "| 004｜2330｜買進｜2026-10-29 | 2026-10-28 19:30 |" in md
+
+
 def test_expected_appendix_intraday_unmatched():
     rows, _ = pr.ledger(MSGS, [], "週報A")
     md = pr.expected_appendix([], rows, D("2026-10-25"), prev_day, (D("2026-10-24"), D("2026-11-02")))
