@@ -50,7 +50,7 @@ def _rows(body):
 
 
 def _twse():
-    return [{"code": r["Code"].strip(), "name": r["Name"].strip(), "t0": roc8(r["Date"]),
+    return [{"mkt": "上市", "code": r["Code"].strip(), "name": r["Name"].strip(), "t0": roc8(r["Date"]),
              "cash": r["CashDividend"], "stock": r["StockDividendRatio"],
              "sub": r["SubscriptionRatio"], "sub_px": r["SubscriptionPricePerShare"]}
             for r in _get("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL",
@@ -58,7 +58,7 @@ def _twse():
 
 
 def _tpex():
-    return [{"code": r["SecuritiesCompanyCode"].strip(), "name": r["CompanyName"].strip(),
+    return [{"mkt": "上櫃", "code": r["SecuritiesCompanyCode"].strip(), "name": r["CompanyName"].strip(),
              "t0": roc8(r["ExRrightsExDividendDate"]), "cash": r["CashDividend"],
              "stock": r["StockDividendRatio"], "sub": r["SubscriptionRatioToNewSharesIssued"],
              "sub_px": r["SubscriptionPricePerShare"]}
@@ -67,18 +67,22 @@ def _tpex():
 
 
 def events(failed=None):
-    """[{code, name, t0, cash, stock, sub, sub_px}]；欄位空白當 0，認購價未公告 → None。
+    """[{mkt, code, name, t0, cash, stock, sub, sub_px}]；欄位空白當 0，認購價未公告 → None。
     上市、上櫃各自抓：一邊失敗不影響另一邊，失敗的來源（twse／tpex）記到 failed；
     沒給 failed 且兩邊都失敗才丟例外。"""
-    out, err = [], None
+    out, err, cnt = [], None, []
     for src, fetch in (("twse", _twse), ("tpex", _tpex)):
         try:
-            out += fetch()
+            got = fetch()
+            out += got
+            cnt.append(f"{SOURCES[src]}預告表 {len(got)} 筆")
         except Exception as e:
             err = e
+            cnt.append(f"{SOURCES[src]}預告表抓取失敗")
             print(f"  {SOURCES[src]}除權息預告表抓取失敗：{type(e).__name__}: {str(e)[:200]}")
             if failed is not None:
                 failed.append(src)
+    print("、".join(cnt))
     if failed is None and err is not None and not out:
         raise err
     for e in out:
@@ -137,15 +141,19 @@ def main():
     rows = []
     for e in sorted(evs, key=lambda e: e["t0"]):
         t5, t6 = cal.shift(e["t0"], -5), cal.shift(e["t0"], -6)
+        head = f"  {e.get('mkt', '')} {e['code']} {e['name']} T0={e['t0']} T-5={t5} T-6={t6}"
         if t5 <= today:
-            continue  # 進場日已過或就是今天
+            print(f"{head} 略過：T-5<=今天（進場日已過或就是今天）")
+            continue
         if t6 > today and not preview:
-            continue  # T-6 收盤還沒出來，之後的晚上再算
+            print(f"{head} 略過：T-6>今天（T-6 收盤還沒出來，之後的晚上再算）")
+            continue
         p = (closes.get(t6) or (latest if preview else {})).get(e["code"])
         if p is None:
-            continue  # 非普通股（ETF 等）或當天沒行情
+            print(f"{head} 略過：無 T-6 收盤（非普通股或無行情）")
+            continue
         if None in (e["cash"], e["stock"]):
-            print(f"  {e['code']} {e['name']} T0={e['t0']}：股利尚未公告，無法試算")
+            print(f"{head} 略過：股利尚未公告，無法試算")
             continue
         p = float(p)
         # R04：同期現金增資當獨立事件，認股權不進幅度也不計報酬 → 幅度只看現金股利與無償配股
@@ -153,16 +161,16 @@ def main():
         face = fv.get(e["code"])
         if face is None:
             if e["stock"]:
-                print(f"  {e['code']} {e['name']} T0={e['t0']}：查不到面額，配股的稅拖曳算不出來，略過（不推估）")
+                print(f"{head} T-6收盤={p:g} 幅度={drop:.2%} 略過：查不到面額，配股的稅拖曳算不出來（不推估）")
                 continue
             face = 10.0  # 沒有配股時面額不影響稅拖曳
         drag = (e["cash"] + e["stock"] * face) / p
         near = abs(drop - DROP) <= 0.02 or abs(drag - DRAG) <= 0.01
         ok = round(drop, 4) >= DROP and round(drag, 4) <= DRAG  # R01：先四捨五入到 0.01% 再比
+        print(f"{head} T-6收盤={p:g} 現金={e['cash']:g} 配股={e['stock']:g} "
+              f"幅度={drop:.2%} 稅拖曳={drag:.2%} → {'符合' if ok else '不符合'}")
         tag = f"T-6 收盤 {p:g}：幅度 {drop:.1%}、稅拖曳 {drag:.1%}" + (f"（面額 {face:g}）" if face != 10 else "")
         if not ok:
-            if drop >= 0.10:
-                print(f"  {e['code']} {e['name']} T0={e['t0']} {tag} → 不符合")
             continue
         print(f"  {e['code']} {e['name']} T0={e['t0']} {tag} → A11 符合{'（接近門檻）' if near else ''}")
         rs = leg("A11", "大幅除權息", e["code"], e["name"], e["t0"].isoformat(), "long", t5, "open", e["t0"], "close", STAT)

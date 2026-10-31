@@ -185,3 +185,51 @@ def test_unknown_state_not_marked_once(mis_seq, capsys):
     mis_seq["seq"], mis_seq["calls"] = [[q(z="480.0", u="-")]], 0  # 有價但沒有漲停價 → 也判斷不了
     assert intraday.scan010(WATCH, {"8299": "O"}, TODAY, dry=False) == []
     assert mis_seq["once"] == []
+
+
+def test_010_log_keeps_raw_mis_fields(mis_seq, capsys):
+    mis_seq["seq"] = [[dict(q(z="480.0", b="479.5_", a="480.5_", h="500.0"), tlong="1793334600000")]]
+    intraday.scan010(WATCH, {"8299": "O"}, TODAY, dry=True)
+    assert "MIS z=480.0 b=479.5_ a=480.5_ h=500.0 u=500.0 tlong=1793334600000 state=open" in capsys.readouterr().out
+
+
+def test_exright_main_logs_every_event(monkeypatch, capsys):
+    """每筆走到試算的事件都印一行（含市場、T-5/T-6、幅度、稅拖曳、結果）；略過的也印原因。"""
+    t0 = dt.date(2026, 11, 9)  # 週一 → T-5=11/02、T-6=10/30（= 今天）
+
+    def ev(mkt, code, name, cash, stock=0.0, t=t0):
+        return {"mkt": mkt, "code": code, "name": name, "t0": t, "cash": cash, "stock": stock,
+                "sub": 0.0, "sub_px": 0.0}
+    evs = [ev("上市", "1111", "大配息", 20.0), ev("上櫃", "2222", "小配息", 1.0),
+           ev("上市", "3333", "沒行情", 1.0), ev("上櫃", "4444", "未公告", None),
+           ev("上市", "6666", "大配股", 0.0, 0.25), ev("上市", "5555", "太早", 1.0, t=dt.date(2026, 11, 30))]
+
+    class FakeNow(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return dt.datetime(2026, 10, 30, 20, 0, tzinfo=tz)
+
+    def fake_supa(path, *a, **k):
+        if path.startswith("holidays"):
+            return [{"market_date": "2026-01-01"}]
+        if path.startswith("market_days"):
+            return [{"stocks": {c: {"c": 100} for c in ("1111", "2222", "4444", "6666")}}]
+        raise AssertionError(path)
+
+    monkeypatch.setenv("DRY_RUN", "1")
+    monkeypatch.delenv("PREVIEW", raising=False)
+    monkeypatch.setattr(exright.dt, "datetime", FakeNow)
+    monkeypatch.setattr(exright, "supa", fake_supa)
+    monkeypatch.setattr(exright, "events", lambda failed: [dict(e) for e in evs])
+    monkeypatch.setattr(exright, "write_status", lambda today, failed: None)
+    monkeypatch.setattr(exright, "face_values", lambda: {"6666": 10.0})
+    exright.main()
+    out = capsys.readouterr().out
+    assert ("上市 1111 大配息 T0=2026-11-09 T-5=2026-11-02 T-6=2026-10-30 T-6收盤=100 現金=20 配股=0 "
+            "幅度=20.00% 稅拖曳=20.00% → 不符合") in out
+    assert "上櫃 2222 小配息" in out and "幅度=1.00% 稅拖曳=1.00% → 不符合" in out
+    assert "上市 6666 大配股" in out and "幅度=20.00% 稅拖曳=2.50% → 符合" in out
+    assert "上市 3333 沒行情" in out and "略過：無 T-6 收盤（非普通股或無行情）" in out
+    assert "上櫃 4444 未公告" in out and "略過：股利尚未公告" in out
+    assert "上市 5555 太早" in out and "略過：T-6>今天" in out
+    assert "DRY_RUN：不寫入" in out
