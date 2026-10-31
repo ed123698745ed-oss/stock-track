@@ -76,6 +76,15 @@ def test_render_shows_010_wording():
     assert "| 盤中 |" not in md
 
 
+def test_dup_main_cross_day_notes():
+    # 10/29 的主推播 10/28 19:30 先送；10/29 00:30 又送一次相同內容 → 不能說「同日」
+    dup = {"id": 3, "sent_at": "2026-10-28T16:30:00Z", "mode": "main", "status": 200, "text": MAIN}
+    md = pr.render(MSGS + [dup], D("2026-10-24"), D("2026-10-31"), dt.datetime(2026, 10, 31, 9, tzinfo=pr.TPE))
+    assert "| 10/29 00:30 | 主推播 | 10/29(四) | 200 | 重複主推播（已於 10/28 19:30 送出） |" in md
+    assert "10/29 00:30 重複主推播：內容已涵蓋於 10/28 19:30 較早的主推播，不重列。" in md
+    assert "同日" not in md
+
+
 def test_missed_key_includes_act_date():
     exp = [dict(EXPECTED[1], act_date="2026-10-30")]  # 同標的同動作，但執行日不同 → 仍算漏推
     _, missed = pr.ledger(MSGS, exp, "週報A")
