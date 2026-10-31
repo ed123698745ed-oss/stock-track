@@ -131,15 +131,15 @@ def build_days(msgs):
         if d is None:
             continue
         rows, fixes, watch, dup = OrderedDict(), [], OrderedDict(), []
-        base_done = False
+        first_main = None
         for m in ms:
             items, fx, wt = parse(m["text"])
             label = MODE.get(m["mode"], m["mode"])
             meta = {"sent": m["sent"], "status": m["status"], "mode": m["mode"]}
-            if m["mode"] == "main" and base_done:
+            if m["mode"] == "main" and first_main is not None:
                 new = [it for it in items if key(it) not in rows]
                 dup.append(f"{m['sent']:%m/%d %H:%M} 重複主推播："
-                           + ("內容已涵蓋於同日較早的推播，不重列。" if not new
+                           + (f"內容已涵蓋於 {first_main['sent']:%m/%d %H:%M} 較早的主推播，不重列。" if not new
                               else f"另含 {len(new)} 項前面沒有的項目，已標「重複主推播」列入。"))
                 for it in new:
                     rows[key(it)] = dict(it, **meta, src=f"重複主推播 {m['sent']:%H:%M}")
@@ -154,7 +154,7 @@ def build_days(msgs):
             for x in wt:
                 watch.setdefault(x["code"], x)
             if m["mode"] == "main":
-                base_done = True
+                first_main = m
         out[d] = {"msgs": ms, "rows": rows, "fixes": fixes, "watch": watch, "dup": dup}
     return out
 
@@ -234,7 +234,7 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
                 if first is None:
                     first = m
                 else:
-                    notes[m["id"]] = f"重複主推播（同日已於 {first['sent']:%H:%M} 送出）"
+                    notes[m["id"]] = f"重複主推播（已於 {first['sent']:%m/%d %H:%M} 送出）"
     for m in sorted(msgs, key=lambda x: x["sent"]):
         dd = f"{m['day']:%m/%d}({WD[m['day'].weekday()]})" if m["day"] else "—"
         w(f"| {m['sent']:%m/%d %H:%M} | {MODE.get(m['mode'], m['mode'])} | {dd} | {m['status']} | {notes.get(m['id'], '')} |")
