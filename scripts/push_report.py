@@ -386,9 +386,13 @@ def expected_appendix(expected, rows, check_from, push_day, act_range):
         ad = dt.date.fromisoformat(e["act_date"])
         k = recon_key(e["strategy_id"], e["company_code"], e["action"], e["act_date"])
         keys.add(k)
+        if k[0] == "010" and k[2] == "放空":  # 010 盤中通知例外：執行日盤中（約 13:05／13:15）提醒
+            window = f"{ad:%m/%d} 盤中～13:30 收盤前（010 盤中通知例外）"
+        else:
+            window = f"{push_day(ad):%m/%d} 19:00～{ad:%m/%d} 08:30"
         out.append(f"| {e['strategy_id']} | {e['company_code']} | {e.get('company_name') or ''} | {e['action']} "
                    f"| {e['act_date']} | {TIMING.get(e.get('act_timing'), '')} "
-                   f"| {push_day(ad):%m/%d} 19:00～{ad:%m/%d} 08:30 | {'｜'.join(k)} "
+                   f"| {window} | {'｜'.join(k)} "
                    f"| {pushed.get(k) or '⚠漏推'}{'（網站隱藏，非取消）' if e.get('hidden') else ''} |")
     out.append("")
     sids = {e["strategy_id"] for e in expected}
