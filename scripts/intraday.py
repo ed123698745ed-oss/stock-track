@@ -37,18 +37,34 @@ def f(x):
     return v if v > 0 else None
 
 
-def mis(chs):
-    """MIS 即時報價。chs 例：["tse_t00.tw", "otc_6488.tw"]。每批 50 檔。"""
-    out = []
+def mis(chs, refetch=0, wait=3):
+    """MIS 即時報價。chs 例：["tse_t00.tw", "otc_6488.tw"]。每批 50 檔。
+    refetch：z、b、a 全空（或沒回傳）的檔隔 wait 秒再抓，最多 refetch 次（試撮空檔常只缺一下）。"""
+    out = {}
     for i in range(0, len(chs), 50):
         url = ("https://mis.twse.com.tw/stock/api/getStockInfo.jsp?json=1&delay=0&ex_ch="
                + "|".join(chs[i:i + 50]))
         req = urllib.request.Request(url, headers={"User-Agent": UA,
                                                    "Referer": "https://mis.twse.com.tw/stock/fibest.jsp"})
         with urllib.request.urlopen(req, timeout=20) as r:
-            out += json.loads(r.read()).get("msgArray") or []
+            for x in json.loads(r.read()).get("msgArray") or []:
+                out[f"{x.get('ex')}_{x.get('c')}.tw"] = x
         time.sleep(0.4)
-    return out
+    for n in range(refetch):
+        miss = [c for c in chs if c not in out or last_price(out[c]) is None]
+        if not miss:
+            break
+        print(f"報價全空 {len(miss)} 檔，{wait} 秒後重抓（第 {n + 1}/{refetch} 次）：{' '.join(miss[:10])}")
+        time.sleep(wait)
+        try:
+            again = mis(miss)
+        except Exception as e:
+            print(f"  重抓失敗：{e}")
+            continue
+        for x in again:
+            if last_price(x) is not None or f"{x.get('ex')}_{x.get('c')}.tw" not in out:
+                out[f"{x.get('ex')}_{x.get('c')}.tw"] = x
+    return list(out.values())
 
 
 def last_price(x):
@@ -66,13 +82,30 @@ def at_limit_down(x):
     return (p is not None and p <= w + 1e-9) or (ask is not None and ask <= w + 1e-9)
 
 
+def no_ask(x):
+    return str(x.get("a") or "-").strip().strip("_") in ("", "-")
+
+
 def at_limit_up(x):
+    """鎖漲停（含疑似）：成交或最佳買價在漲停；或賣方掛單全空（a == "-"）且今日最高 = 漲停
+    （鎖死時常見 z、b 也暫缺，只剩最高價看得出來）。"""
     u = f(x.get("u"))
     if not u:
         return False
     p = f(x.get("z"))
     bid = f(x.get("b"))
-    return (p is not None and p >= u - 1e-9) or (bid is not None and bid >= u - 1e-9)
+    hi = f(x.get("h"))
+    return ((p is not None and p >= u - 1e-9) or (bid is not None and bid >= u - 1e-9)
+            or (no_ask(x) and hi is not None and hi >= u - 1e-9))
+
+
+def limit_up_state(x):
+    """010 盯盤用：'locked'（含疑似鎖漲停）、'open'（確定沒鎖）、'unknown'（漲停價或報價都缺，判斷不了）。"""
+    if at_limit_up(x):
+        return "locked"
+    if not f(x.get("u")) or last_price(x) is None:
+        return "unknown"
+    return "open"
 
 
 _SENT = None
@@ -95,6 +128,30 @@ def mark_sent(today):
     if _PENDING:
         supa("intraday_alerts?on_conflict=d,key", "POST", [{"d": today.isoformat(), "key": k} for k in _PENDING],
              prefer="resolution=ignore-duplicates,return=minimal")
+
+
+STATE_TXT = {"locked": "鎖漲停（含疑似）", "open": "未鎖", "unknown": "狀態不明（報價暫缺），下一輪再看"}
+
+
+def scan010(watch, mk, today, dry):
+    """昨天連 ≥ 4 根漲停的股票，現在確定沒鎖漲停 → [(key, 一行)]。
+    狀態不明（報價重抓後仍全空、沒有漲停價）不記 once、不推，留給下一輪（13:15）再判斷。"""
+    q = {x.get("c"): x for x in mis([f"{'tse' if mk.get(w['code']) == 'L' else 'otc'}_{w['code']}.tw"
+                                     for w in watch], refetch=2)}
+    o010 = []
+    for w in watch:
+        x = q.get(w["code"])
+        if not x:
+            print(f"010 盯盤 {w['name']}{w['code']} 沒有報價，下一輪再看")
+            continue
+        px = last_price(x)
+        st = limit_up_state(x)
+        print(f"010 盯盤 {w['name']}{w['code']} 連{w['streak']} 現價 {px} 漲停 {x.get('u')} 最高 {x.get('h')} "
+              f"{STATE_TXT[st]}")
+        if st == "open" and (dry or once(today, f"010:{w['code']}")):
+            u = f(x.get("u"))
+            o010.append((f"010:{w['code']}", f"・{w['name']} {w['code']}　連{w['streak']}｜現 {px:g}／停 {u:g}"))
+    return o010
 
 
 def main():
@@ -150,20 +207,7 @@ def main():
     o010 = []
     if watch:
         mk = {c: s.get("m") for c, s in days[-1]["stocks"].items()}
-        q = {x.get("c"): x for x in mis([f"{'tse' if mk.get(w['code']) == 'L' else 'otc'}_{w['code']}.tw"
-                                         for w in watch])}
-        for w in watch:
-            x = q.get(w["code"])
-            if not x:
-                continue
-            px = last_price(x)
-            locked = at_limit_up(x)
-            print(f"010 盯盤 {w['name']}{w['code']} 連{w['streak']} 現價 {px} 漲停 {x.get('u')} "
-                  f"{'鎖漲停' if locked else '未鎖（報價暫缺）' if px is None else '未鎖'}")
-            if not locked and (dry or once(today, f"010:{w['code']}")):
-                u = f(x.get("u"))
-                now_txt = f"現 {px:g}／停 {u:g}" if px is not None and u else "報價暫缺，請自行看盤"
-                o010.append((f"010:{w['code']}", f"・{w['name']} {w['code']}　連{w['streak']}｜{now_txt}"))
+        o010 = scan010(watch, mk, today, dry)
 
     # 排版與晚上推播相同：【策略】→ 一行績效 → ◆ 動作 N 檔 → 共同條件一行 → 每檔一行
     if o010:
