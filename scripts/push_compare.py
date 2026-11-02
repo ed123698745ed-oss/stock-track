@@ -172,8 +172,8 @@ def items_from(messages, push_log, parse):
                    if r.get("action") in ROLE}
         if t_items != l_items and m.get("mode") in ("main", "late"):
             only_t, only_l = sorted(t_items - l_items), sorted(l_items - t_items)
-            notes.append(f"訊息 {m['id']}（{sent:%m/%d %H:%M}）推播紀錄與原文不一致："
-                         + (f"原文有、紀錄沒有 {only_t}" if only_t else "") + (f"；紀錄有、原文沒有 {only_l}" if only_l else ""))
+            parts = ([f"原文有、紀錄沒有 {only_t}"] if only_t else []) + ([f"紀錄有、原文沒有 {only_l}"] if only_l else [])
+            notes.append(f"訊息 {m['id']}（{sent:%m/%d %H:%M}）推播紀錄與原文不一致：" + "；".join(parts))
         for r in rows:
             src = r.get("source") or ""
             act = r.get("action")
