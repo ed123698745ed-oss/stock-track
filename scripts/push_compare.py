@@ -166,6 +166,14 @@ def items_from(messages, push_log, parse):
             for f in fx:
                 fixes.append(dict(base, sid=f["strategy"], code=f["code"], action=f["action"], line=f["detail"]))
             continue
+        # 推播紀錄（push_log）與原文逐項核對：兩邊不一致代表紀錄寫錯或原文解析不到，列註記給人工
+        t_items = {(i["strategy"], i["code"]) for i in parse(m["text"])[0] if i.get("action") in ROLE}
+        l_items = {(BLOCK_SID.get(r.get("source"), r.get("source")), r.get("code")) for r in rows
+                   if r.get("action") in ROLE}
+        if t_items != l_items and m.get("mode") in ("main", "late"):
+            only_t, only_l = sorted(t_items - l_items), sorted(l_items - t_items)
+            notes.append(f"訊息 {m['id']}（{sent:%m/%d %H:%M}）推播紀錄與原文不一致："
+                         + (f"原文有、紀錄沒有 {only_t}" if only_t else "") + (f"；紀錄有、原文沒有 {only_l}" if only_l else ""))
         for r in rows:
             src = r.get("source") or ""
             act = r.get("action")
@@ -175,13 +183,17 @@ def items_from(messages, push_log, parse):
                 fixes.append(dict(base, sid=src, code=r.get("code"), action=r["action"], line=r.get("line") or "",
                                   act_date=r.get("act_date")))
                 continue
-            items.append(dict(base, sid=src, code=r.get("code"), name=r.get("name"), action=act,
+            nm = r.get("name") or next((n for n, c in LINE_STOCK.findall(r.get("line") or "") if c == r.get("code")), None)
+            items.append(dict(base, sid=src, code=r.get("code"), name=nm, action=act,
                               act_date=r.get("act_date"), timing=r.get("act_timing"), line=r.get("line") or "",
                               src="推播紀錄"))
     return items, fixes, notes
 
 
 TM_REV = {"開盤": "open", "收盤": "close"}
+BLOCK_SID = {"處置股": "A02", "庫藏股": "A03", "MSCI調整": "A04", "0050調整": "A05", "分割": "A06"}
+MODE_TXT = {"main": "主推播", "late": "補推", "intraday": "盤中提醒"}
+LINE_STOCK = re.compile(r"・(.+?) (\w+)　")
 
 
 def classify(it, cfg):
@@ -198,11 +210,26 @@ def classify(it, cfg):
     return "strategy", sid
 
 
-def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, perf_vr=None):
-    """回傳 dict：diffs（差異列）、by_key（對帳鍵 → 比對結果）、counts、na、warnings、vr_lines、notes。"""
+def earlier_fixes(rows):
+    """本期以前的【更正】推播（push_log 列，含 push_messages(status,sent_at)）→ fixes 格式。改期常在上週就已更正。"""
+    out = []
+    for r in rows or []:
+        m = r.get("push_messages") or {}
+        if not m.get("sent_at"):
+            continue
+        out.append({"msg_id": r.get("message_id"), "sent": tpe(m["sent_at"]), "status": m.get("status"),
+                    "mode": r.get("mode"), "sid": r.get("source"), "code": r.get("code"), "action": r.get("action"),
+                    "line": r.get("line") or "", "act_date": r.get("act_date")})
+    return out
+
+
+def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, perf_vr=None, prior_fixes=None):
+    """回傳 dict：diffs（差異列）、by_key（對帳鍵 → 比對結果）、counts、na、warnings、vr_lines、notes。
+    prior_fixes：本期以前的【更正】（earlier_fixes() 格式），只用來判斷改期是否已通知。"""
     cfg = cfg or load_cfg()
     perf_vr = load_perf_vr() if perf_vr is None else perf_vr
     items, fixes, notes = items_from(messages, push_log, parse)
+    fixes = list(prior_fixes or []) + fixes
     diffs, by_key, na = [], {}, {}
 
     def add(kind, it, want, why, key=None):
@@ -213,6 +240,12 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
                       "應為何值": want, "證據": why})
         if key:
             by_key.setdefault(key, set()).add(kind)
+
+    grouped = {}  # (類型, 訊息, 應為何值) → [項目]：推播時間、重複發送是整則訊息的問題，一則訊息一列
+
+    def add_msg(kind, it, want, why):
+        grouped.setdefault((kind, it["msg_id"], want, why), []).append(it)
+        by_key.setdefault((it["sid"], it["code"], it["action"], it.get("act_date")), set()).add(kind)
 
     rows = [a for a in actions or []]
     idx = {}
@@ -228,7 +261,7 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
                         return f
         return None
 
-    trade, seen_sids = [], set()
+    trade, seen_sids, pairs_seen = [], set(), set()
     for it in items:
         kind, sid = classify(it, cfg)
         if kind == "na":
@@ -260,6 +293,9 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
             it["bad"] = True
 
     vr_lines = []
+    a_seen = sorted(s for s in seen_sids if (cfg["strategies"].get(s) or {}).get("group") == "A")
+    if a_seen:
+        vr_lines.append(f"{'、'.join(a_seen)}：{cfg['a_vr']}（Ed 2026-10-31 決定；以總表〈完整策略績效〉登載為準）")
     for sid in sorted(seen_sids):
         s = cfg["strategies"].get(sid)
         if not s or s.get("group") != "B":
@@ -297,8 +333,8 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
             lo = dt.datetime.combine(p, dt.time(19, 0), TPE)
             hi = dt.datetime.combine(ad, dt.time(8, 30), TPE)
             if not (lo <= sd < hi) or sd.hour < 19:
-                add("時點不符", it, f"{md(p)} 19:00 以後、當晚送出（主推播以台灣日期為準、不跨午夜）",
-                    f"訊息 {it['msg_id']} {'主推播' if it['mode'] == 'main' else '補推'} {sd:%m/%d %H:%M} 送出", key)
+                add_msg("時點不符", it, "執行日前一交易日 19:00 以後、當晚送出（主推播以台灣日期為準、不跨午夜）",
+                        f"訊息 {it['msg_id']} {'主推播' if it['mode'] == 'main' else '補推'} {sd:%m/%d %H:%M} 送出")
         if it.get("block"):
             na[f"{it['sid']} 舊板塊買賣（沒有應推清單，只核對選股與推播時間）"] = \
                 na.get(f"{it['sid']} 舊板塊買賣（沒有應推清單，只核對選股與推播時間）", 0) + 1
@@ -324,6 +360,18 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
                 f"訊息 {it['msg_id']} 推 {TM.get(it['timing'])}", key)
         for got, want in check_row(row, cal, cfg):
             add("時點不符", it, want, f"資料列 id {row['id']} {got}", key)
+        # 成對一致（防錯清單 A7、事故 9）：進場列記的出場日＝出場列的執行日；不一致又沒推【更正】→ 進場訊息寫的出場日是錯的
+        other = "exit" if role == "entry" else "entry"
+        for o in idx.get((sid, it["code"], other, side), []):
+            if o["act_date"] != row.get("pair_date") or o.get("pair_date") == row["act_date"]:
+                continue
+            ent_r, ext_r = (row, o) if role == "entry" else (o, row)
+            pair = (ent_r["id"], ext_r["id"])
+            if pair in pairs_seen or corrected(dict(it, sent=dt.datetime.min.replace(tzinfo=TPE)), ext_r):
+                continue
+            pairs_seen.add(pair)
+            add("時點不符", it, f"出場 {md(ext_r['act_date'])}（出場列 id {ext_r['id']}）；改期後應推【更正】並同步進場列",
+                f"進場列 id {ent_r['id']} 記出場 {md(ent_r['pair_date'])}，與出場列不一致，推播紀錄沒有更正", key)
         if row.get("ignored") and not row.get("checked"):
             canc = any(f["sid"] == sid and f["code"] == it["code"] and f["action"] == "取消" for f in fixes)
             if not canc:
@@ -358,9 +406,8 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
         for it in its[1:]:
             if it["msg_id"] == its[0]["msg_id"]:
                 continue
-            add("誤推", it, f"同一事件已於 {its[0]['sent']:%m/%d %H:%M} 送出（訊息 {its[0]['msg_id']}），不應重複發送",
-                f"重複發送：訊息 {it['msg_id']}（{it['mode']}）",
-                (it["sid"], it["code"], it["action"], it.get("act_date")))
+            add_msg("誤推", it, f"已於 {its[0]['sent']:%m/%d %H:%M}（訊息 {its[0]['msg_id']}）送出，同一事件同一時段不重複發送",
+                    f"重複發送：訊息 {it['msg_id']}（{MODE_TXT.get(it['mode'], it['mode'])} {it['sent']:%m/%d %H:%M}）")
 
     # ---- 3 漏推（沿用既有應推口徑：export_push_log.expected） ----
     pushed = set()
@@ -385,6 +432,15 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
         window = (f"{md(e['act_date'])} 盤中～13:30（010 盤中通知）" if e["strategy_id"] == "010" and e["action"] == "放空"
                   else f"{md(e['push_day'])} 19:00～{md(e['act_date'])} 08:30 推播")
         add("漏推", it, window, f"strategy_actions 應推、推播紀錄沒有{'（網站隱藏，非取消）' if e.get('hidden') else ''}", k)
+
+    for (kind, mid, want, why), its in grouped.items():
+        names = "、".join(f"{x['sid']} {x.get('name') or ''} {x['code']}".replace("  ", " ") for x in its[:3])
+        acts = {x["action"] for x in its}
+        days = {x.get("act_date") for x in its}
+        diffs.append({"類型": kind, "策略": "、".join(sorted({x["sid"] for x in its})),
+                      "股票": names + (f" 等 {len(its)} 項" if len(its) > 3 else ""),
+                      "動作": acts.pop() if len(acts) == 1 else "多項", "執行日": days.pop() if len(days) == 1 else "多日",
+                      "時點": "", "推播時間": f"{its[0]['sent']:%m/%d %H:%M}", "應為何值": want, "證據": why})
 
     # ---- 訊息內警告：程式不判斷真假，列給人工 ----
     warnings = []

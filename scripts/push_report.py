@@ -371,8 +371,10 @@ def ledger(messages, expected=(), report_name="", prior=None, compare=None):
     for r in rows:
         for c in ("提醒時點", "執行時點", "本週送出"):
             r.setdefault(c, "")
-        r["比對結果"] = (result_for(compare, r["策略"], r["代號"], r["動作"], r["執行日"]) if compare
-                         else ("漏推" if r["狀態"] == "⚠ 漏推" else ""))
+        res = result_for(compare, r["策略"], r["代號"], r["動作"], r["執行日"]) if compare else ""
+        if r["狀態"] == "⚠ 漏推" and "漏推" not in res:  # 原文沒有這項：以使用者實際收到的原文為準
+            res = "漏推" if res in ("", "正常") else f"漏推、{res}"
+        r["比對結果"] = res
     rows.sort(key=lambda r: (r["策略"], r["執行日"], r["代號"], r["動作"]))
     return rows, missed
 

@@ -18,7 +18,7 @@ import json
 import os
 
 from calendar_signals import Cal, supa
-from push_compare import compare, render_section
+from push_compare import compare, earlier_fixes, render_section
 from push_report import LEDGER_COLS, TPE, expected_appendix, is_cancelled, ledger, load_prior, parse, render
 
 
@@ -61,6 +61,8 @@ for a in acts:
         continue
     d = dt.date.fromisoformat(a["act_date"])
     push_day = cal.shift(d, -1)
+    if a["strategy_id"] == "010" and a["role"] == "entry" and dt.datetime.combine(d, dt.time(13, 30), TPE) > now:
+        continue  # 010 進場以當日盤中提醒為通知，時段還沒過（回放 AS_OF 之後才建的列）不列應推
     if check_from <= push_day <= last_push_day:
         hidden = bool(a.pop("ignored"))
         a.pop("checked")
@@ -104,7 +106,11 @@ lo_d, hi_d = start - dt.timedelta(days=40), upper + dt.timedelta(days=40)
 actions = supa("strategy_actions?select=id,strategy_id,variant,company_code,company_name,cycle,role,side,act_date,"
                "act_timing,pair_date,pair_timing,detail,ignored,checked,notified_at"
                f"&act_date=gte.{lo_d.isoformat()}&act_date=lte.{hi_d.isoformat()}&limit=5000") or []
-cmp_res = compare(msgs, plog, actions, expected, cal, now, parse)
+# 本期以前 40 天的【更正】：改期可能在上週就推過更正
+pfix = supa("push_log?select=message_id,source,code,action,act_date,line,mode,push_messages(status,sent_at)"
+            f"&action=in.(更正,取消)&push_date=gte.{(start - dt.timedelta(days=40)).isoformat()}"
+            f"&push_date=lt.{start.isoformat()}&limit=5000") or []
+cmp_res = compare(msgs, plog, actions, expected, cal, now, parse, prior_fixes=earlier_fixes(pfix))
 rows, missed = ledger(msgs, expected, name, prior, compare=cmp_res)
 appendix = expected_appendix(expected, rows, check_from, lambda x: cal.shift(x, -1), (start, upper))
 report = render(msgs, start, today, now, missed=missed, push_alerts=push_alerts, appendix=appendix,
@@ -124,6 +130,6 @@ print("===END===")
 print(f"總表 {len(rows)} 列；應推 {len(expected)} 項，漏推 {len(missed)} 項；主推播時間異常 {len(push_alerts)} 項")
 print("程式比對：" + ("、".join(f"{k} {v}" for k, v in cmp_res["counts"].items() if v) or "0 筆差異"))
 if os.environ.get("RAW") == "1":
-    json.dump({"messages": msgs, "expected": expected, "push_log": plog, "actions": actions,
+    json.dump({"messages": msgs, "expected": expected, "push_log": plog, "actions": actions, "prior_fixes": pfix,
                "holidays": sorted(d.isoformat() for d in cal.hol), "as_of": now.isoformat(), "start": start.isoformat()},
               open("raw.json", "w", encoding="utf-8"), ensure_ascii=False)
