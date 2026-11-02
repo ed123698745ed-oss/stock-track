@@ -67,7 +67,9 @@ def test_ledger_010_timing_and_approval():
     assert r["1101"]["核准V/R"] == "V01/R03" and r["1101"]["狀態"] == "⚠ 漏推"
     assert r["6999"]["核准V/R"] == "待補／見策略總表"
     assert [m["代號"] for m in missed] == ["1101"]  # 010 盤中提醒以收盤放空對上應推
-    assert pr.LEDGER_COLS[-1] == "核准V/R" and pr.LEDGER_COLS[:12][-1] == "週報"
+    # 新欄只加在最後：A～M 不動；N～P 佔位（Drive 人工欄），Q＝比對結果
+    assert pr.LEDGER_COLS[12] == "核准V/R" and pr.LEDGER_COLS[11] == "週報"
+    assert pr.LEDGER_COLS[13:] == ["提醒時點", "執行時點", "本週送出", "比對結果"]
 
 
 def test_render_shows_010_wording():

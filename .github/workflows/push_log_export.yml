@@ -12,6 +12,14 @@ on:
         description: "1＝另輸出原文 JSON"
         required: false
         default: "0"
+      start:
+        description: '回放用：起算日 YYYY-MM-DD（空白＝照 days 與 min_start）'
+        required: false
+        default: ''
+      as_of:
+        description: '回放用：只取這個時間以前的訊息，例 2026-10-31T23:59:59+08:00（空白＝現在）'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -26,6 +34,8 @@ jobs:
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       DAYS: ${{ github.event.inputs.days }}
       RAW: ${{ github.event.inputs.raw }}
+      START: ${{ github.event.inputs.start }}
+      AS_OF: ${{ github.event.inputs.as_of }}
     steps:
       - uses: actions/checkout@v4
       - run: cd scripts && python3 export_push_log.py && mv report.md ledger.json expected.json /tmp/ && (mv raw.json /tmp/ 2>/dev/null || true)

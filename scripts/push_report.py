@@ -12,6 +12,8 @@ import re
 import sys
 from collections import OrderedDict
 
+from push_compare import load_cfg, result_for
+
 TPE = dt.timezone(dt.timedelta(hours=8))
 WD = "一二三四五六日"
 MODE = {"main": "主推播", "late": "補推", "intraday": "盤中提醒", "closure": "臨時休市通知", "closure_check": "休市待確認"}
@@ -28,6 +30,9 @@ MOVED = re.compile(r"改為 (\d{1,2})/(\d{1,2})")
 GROUP = re.compile(r"^【(\S+) ([^】]+)】$")
 SUB = re.compile(r"^◆ (開盤|收盤)?(\S+?)(?:（[^）]*）)? \d+ 檔")
 ITEM2 = re.compile(r"^・(.+?) (\w+)(?:　(.*))?$")
+# 2026-10-31（PR #71／#72）起的精簡排版：【代號】策略名｜出場提示 → 「· 時點動作：股名 代號」
+NEWGRP = re.compile(r"^【(A\d{2}|\d{3})】(\S.*)$")
+NEWITEM = re.compile(r"^· (開盤|收盤)?([^：（]+?)(?:（([^）]*)）)?：(.+?) (\w+)$")
 
 ALIAS = {"開板放空": "放空"}  # 010 盤中提醒的動作名稱
 INTRA_010 = "盤中提醒／收盤執行（條件成立才放空）"  # 010 開板放空：盤中只是提醒，收盤仍沒漲停才放空
@@ -38,7 +43,10 @@ APPROVED = {"004": "V02/R02", "010": "V01/R04", "019": "V01/R03"}
 PURPOSE = ("本週報目的：紀錄本週實際推播內容，供 Eve 審查推播是否依《可執行策略總表》（核准 V/R 與組合）選出正確股票，"
            "且進出場推播時間正確。審查發現錯誤時，Emit 修正推播程式，並在本週報以更正註記補正；已送出的推播原文不改寫。")
 LEDGER_COLS = ["策略", "代號", "名稱", "動作", "執行日", "時點", "狀態", "首次推播", "推播類型",
-               "LINE回應", "更正", "週報", "核准V/R"]  # 新欄只加在最後，不動 Drive 總表既有欄位
+               "LINE回應", "更正", "週報", "核准V/R",
+               # N～P 是 Drive《推播總表》10/26 週人工補的欄位（提醒時點、執行時點、本週送出），程式不填；
+               # 週報排程照位置追加，所以留空佔位，「比對結果」才會落在 Q 欄
+               "提醒時點", "執行時點", "本週送出", "比對結果"]  # 新欄只加在最後，不動 Drive 總表既有欄位
 
 
 def tpe(ts):
@@ -57,7 +65,7 @@ def target_day(text, sent):
 def parse(text):
     """回傳 (items, fixes, watch)。item: strategy, name, code, action, timing, detail。"""
     items, fixes, watch = [], [], []
-    grp, sub, common = None, None, ""
+    grp, sub, common, new = None, None, "", None
     lines = text.splitlines()
     i = 0
     while i < len(lines):
@@ -70,6 +78,15 @@ def parse(text):
         if m := FIX.match(ln):
             fixes.append({"strategy": m.group(1).split(" ")[0], "name": m.group(2), "code": m.group(3),
                           "action": m.group(4), "detail": "；".join(body)})
+        elif m := NEWGRP.match(ln):
+            grp, sub, common = None, None, ""
+            new = (m.group(1), "盯盤" in m.group(2))
+        elif (m := NEWITEM.match(ln)) and new:
+            if new[1]:
+                watch.append({"name": m.group(4), "code": m.group(5), "detail": (m.group(1) or "") + m.group(2)})
+            else:
+                items.append({"strategy": new[0], "name": m.group(4), "code": m.group(5), "action": m.group(2),
+                              "timing": m.group(1) or m.group(3) or "", "detail": "；".join(body)})
         elif m := INTRA_ITEM.match(ln):
             items.append({"strategy": m.group(1), "name": m.group(3), "code": m.group(4), "action": m.group(2),
                           "timing": "盤中", "detail": m.group(5) + ("；" + "；".join(body) if body else "")})
@@ -91,7 +108,7 @@ def parse(text):
             items.append({"strategy": strat, "name": m.group(3), "code": m.group(4), "action": m.group(1),
                           "timing": timing, "detail": detail})
         elif m := GROUP.match(ln):
-            grp, sub, common = m.group(1), None, ""
+            grp, sub, common, new = m.group(1), None, "", None
         elif (m := SUB.match(ln)) and grp:
             sub, common = (m.group(1) or ("盤中" if INTRA.search(text) else ""), m.group(2)), "；".join(body)
         elif (m := ITEM2.match(ln)) and grp and sub:
@@ -113,6 +130,13 @@ def timing_label(it):
 
 
 def approved(sid):
+    """核准 V/R：以 config/push_compare.json（可執行策略總表快照）為準；A 系列依 Ed 10/31 決定填不適用。"""
+    try:
+        s = load_cfg()["strategies"].get(sid)
+        if s:
+            return load_cfg()["a_vr"] if s.get("group") == "A" else s.get("vr") or "待補／見策略總表"
+    except Exception:
+        pass
     return APPROVED.get(sid, "待補／見策略總表")
 
 
@@ -194,7 +218,7 @@ def fix_note(f, d):
 
 
 def render(messages, start, end, generated, ledger_url=None, missed=None, check_note=None, push_alerts=None,
-           appendix=None):
+           appendix=None, compare=None):
     msgs = prepare(messages)
     days = build_days(msgs)
     out = []
@@ -215,6 +239,8 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
     if ledger_url:
         w(f"- 依策略查詢：《推播總表》{ledger_url}")
     w("")
+    if compare:
+        w(compare)
     if push_alerts:
         w("## ⚠ 主推播時間異常\n")
         w("⑦ 主推播送出時間不在 19:00～23:59；⑧ 某交易日開盤前沒收到成功的主推播（依目標交易日判斷，休市日不算）。請人工確認內容與日期。\n")
@@ -295,7 +321,7 @@ def recon_key(strategy, code, action, act_date):
     return (strategy, code, ALIAS.get(action, action), act_date)
 
 
-def ledger(messages, expected=(), report_name="", prior=None):
+def ledger(messages, expected=(), report_name="", prior=None, compare=None):
     """依策略排序的明細列（LEDGER_COLS），以及漏推清單。
 
     expected：strategy_actions 中「推播時間已過」的應推項目
@@ -342,6 +368,11 @@ def ledger(messages, expected=(), report_name="", prior=None):
              "核准V/R": approved(e["strategy_id"])}
         missed.append(r)
         rows.append(r)
+    for r in rows:
+        for c in ("提醒時點", "執行時點", "本週送出"):
+            r.setdefault(c, "")
+        r["比對結果"] = (result_for(compare, r["策略"], r["代號"], r["動作"], r["執行日"]) if compare
+                         else ("漏推" if r["狀態"] == "⚠ 漏推" else ""))
     rows.sort(key=lambda r: (r["策略"], r["執行日"], r["代號"], r["動作"]))
     return rows, missed
 
