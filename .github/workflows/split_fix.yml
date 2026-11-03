@@ -1,0 +1,50 @@
+name: 分割追蹤資料更正
+
+# Ed 指出錯誤後的人工更正：只改 split_watch 的宣告拆股日、股東會日、備註、忽略。先 dry_run=1 看改前改後。
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: '股票代號'
+        required: true
+      declare:
+        description: '宣告拆股日 YYYY-MM-DD（空白＝不改）'
+        required: false
+        default: ''
+      meeting:
+        description: '股東會日 YYYY-MM-DD（空白＝不改）'
+        required: false
+        default: ''
+      note:
+        description: '備註（空白＝不改）'
+        required: false
+        default: ''
+      ignored:
+        description: 'true＝不再追蹤、false＝恢復追蹤（空白＝不改）'
+        required: false
+        default: ''
+      dry_run:
+        description: '1＝只印改前改後，不寫入'
+        required: false
+        default: '1'
+
+permissions:
+  contents: read
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONUNBUFFERED: '1'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      CODE: ${{ github.event.inputs.code }}
+      DECLARE: ${{ github.event.inputs.declare }}
+      MEETING: ${{ github.event.inputs.meeting }}
+      NOTE: ${{ github.event.inputs.note }}
+      IGNORED: ${{ github.event.inputs.ignored }}
+      DRY_RUN: ${{ github.event.inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd scripts && python3 split_fix.py

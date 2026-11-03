@@ -227,17 +227,28 @@ jobs:
               r, pa, pb = ratio_of(strip_par_note(a["subject"]) + " " + strip_par_note(a.get("detail")))
               d = a["date"] or TODAY
               tag = "定向" if matched == "定向追蹤" else conf
+              lead = {
+                  "p_code": a["code"], "p_name": a["name"], "p_market": a.get("mk"),
+                  "p_date": d.isoformat(), "p_kind": kind, "p_confidence": conf,
+                  "p_ratio": r, "p_par_from": pa, "p_par_to": pb,
+                  "p_subject": a["subject"][:500],
+                  "p_detail": (a.get("detail") or "")[:2000],
+                  "p_source": f"重大訊息（{a['src']}／{matched}）"}
               try:
-                  supa("rpc/add_split_lead", {
-                      "p_code": a["code"], "p_name": a["name"], "p_market": a.get("mk"),
-                      "p_date": d.isoformat(), "p_kind": kind, "p_confidence": conf,
-                      "p_ratio": r, "p_par_from": pa, "p_par_to": pb,
-                      "p_subject": a["subject"][:500],
-                      "p_detail": (a.get("detail") or "")[:2000],
-                      "p_source": f"重大訊息（{a['src']}／{matched}）"})
+                  supa("rpc/add_split_lead", lead)
                   n_lead += 1
               except Exception as e:
-                  print(f"  線索寫入失敗 {a['code']}: {e}")
+                  # 2026-11-03 新增的類別（變更登記完成、面額變更公告）若被資料庫欄位限制擋下，
+                  # 改寫「其他」保住線索；不能退回「宣告拆股」，否則宣告日又會被往後蓋
+                  if kind in ("變更登記完成", "面額變更公告"):
+                      try:
+                          supa("rpc/add_split_lead", dict(lead, p_kind="其他"))
+                          n_lead += 1
+                          print(f"  ⚠ {a['code']} 類別「{kind}」寫入失敗，改記「其他」：{e}")
+                      except Exception as e2:
+                          print(f"  線索寫入失敗 {a['code']}: {e2}")
+                  else:
+                      print(f"  線索寫入失敗 {a['code']}: {e}")
 
               # 原本的 detections 保留，網站舊區塊還在用
               if matched != "定向追蹤" and conf == "強":
