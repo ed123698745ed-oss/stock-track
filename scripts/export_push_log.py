@@ -4,7 +4,8 @@
 應在本期主推播提醒（執行日的前一個交易日 ∈ 本期，且推播時間已過）卻沒推出的項目列「⚠ 漏推」。
 舊板塊（IPO、處置股等 v_tomorrow）沒有獨立的應推清單，只列已推項目。
 
-DAYS=7（預設）。PRIOR_LEDGER=上週 ledger.json／CSV 路徑（選填）：本週再提醒的項目沿用上週首次推播與更正。
+DAYS=7（預設）。回放已審週：START=YYYY-MM-DD、AS_OF=ISO 時間（例 2026-10-31T23:59:59+08:00），
+只取 AS_OF 以前的訊息，結果寫到暫存分支，不動 Drive。PRIOR_LEDGER=上週 ledger.json／CSV 路徑（選填）：本週再提醒的項目沿用上週首次推播與更正。
 輸出：
   report.md   週報（依執行日）
   ledger.json 依策略排序的總表列（Drive《推播總表》追加用）
@@ -15,22 +16,33 @@ GitHub Actions 會把這些檔推到暫存分支 tmp-push-export，給連不到 
 import datetime as dt
 import json
 import os
+from urllib.parse import quote
 
 from calendar_signals import Cal, supa
-from push_report import LEDGER_COLS, TPE, expected_appendix, is_cancelled, ledger, load_prior, render
+from push_compare import compare, earlier_fixes, render_section
+from push_report import LEDGER_COLS, TPE, expected_appendix, is_cancelled, ledger, load_prior, parse, render
 
-now = dt.datetime.now(TPE)
+
+def q(ts):
+    return ts.astimezone(dt.timezone.utc).isoformat().replace("+", "%2B")
+
+
+as_of = (os.environ.get("AS_OF") or "").strip()
+now = dt.datetime.fromisoformat(as_of).astimezone(TPE) if as_of else dt.datetime.now(TPE)
 today = now.date()
 days = int(os.environ.get("DAYS") or 7)
 start = today - dt.timedelta(days=days)
-try:  # 上一份週報已涵蓋的日期不再重複匯出（config/push_export.json 的 min_start）
-    _ms = json.load(open(os.path.join(os.path.dirname(__file__), "..", "config", "push_export.json"), encoding="utf-8")).get("min_start")
-    if _ms and os.environ.get("IGNORE_MIN_START") != "1":
-        start = max(start, dt.date.fromisoformat(_ms))
-except FileNotFoundError:
-    pass
-since = dt.datetime.combine(start, dt.time(0), TPE).astimezone(dt.timezone.utc).isoformat().replace("+", "%2B")
-msgs = supa(f"push_messages?select=id,sent_at,mode,status,text&sent_at=gte.{since}&order=sent_at") or []
+if (os.environ.get("START") or "").strip():
+    start = dt.date.fromisoformat(os.environ["START"].strip())
+else:
+    try:  # 上一份週報已涵蓋的日期不再重複匯出（config/push_export.json 的 min_start）
+        _ms = json.load(open(os.path.join(os.path.dirname(__file__), "..", "config", "push_export.json"), encoding="utf-8")).get("min_start")
+        if _ms and os.environ.get("IGNORE_MIN_START") != "1":
+            start = max(start, dt.date.fromisoformat(_ms))
+    except FileNotFoundError:
+        pass
+since = q(dt.datetime.combine(start, dt.time(0), TPE))
+msgs = supa(f"push_messages?select=id,sent_at,mode,status,text&sent_at=gte.{since}&sent_at=lte.{q(now)}&order=sent_at") or []
 
 # 應推清單：主推播在執行日前一個交易日晚上送出
 cal = Cal([dt.date.fromisoformat(r["market_date"]) for r in supa("holidays?select=market_date&limit=5000")])
@@ -50,6 +62,8 @@ for a in acts:
         continue
     d = dt.date.fromisoformat(a["act_date"])
     push_day = cal.shift(d, -1)
+    if a["strategy_id"] == "010" and a["role"] == "entry" and dt.datetime.combine(d, dt.time(13, 30), TPE) > now:
+        continue  # 010 進場以當日盤中提醒為通知，時段還沒過（回放 AS_OF 之後才建的列）不列應推
     if check_from <= push_day <= last_push_day:
         hidden = bool(a.pop("ignored"))
         a.pop("checked")
@@ -83,19 +97,49 @@ while d <= last_push_day:
 name = f"推播紀錄_{start:%Y%m%d}～{today:%Y%m%d}"
 prior_path = os.environ.get("PRIOR_LEDGER")
 prior = load_prior(prior_path) if prior_path and os.path.exists(prior_path) else None
-rows, missed = ledger(msgs, expected, name, prior)
+# 程式比對：推播紀錄逐項（push_log）＋strategy_actions（執行日前後 40 天，含配對列）。
+# 比對失敗不能拖垮週報：週報照出，開頭寫明比對失敗與原因（空白不等於正常）。
+plog, actions, pfix, cmp_res, cmp_err = [], [], [], None, None
+try:
+    ids = [str(m["id"]) for m in msgs]
+    for i in range(0, len(ids), 100):
+        plog += supa(f"push_log?select=message_id,source,code,name,action,act_date,act_timing,line"
+                     f"&message_id=in.({','.join(ids[i:i + 100])})&limit=5000") or []
+    lo_d, hi_d = start - dt.timedelta(days=40), upper + dt.timedelta(days=40)
+    actions = supa("strategy_actions?select=id,strategy_id,variant,company_code,company_name,cycle,role,side,act_date,"
+                   "act_timing,pair_date,pair_timing,detail,ignored,checked,notified_at"
+                   f"&act_date=gte.{lo_d.isoformat()}&act_date=lte.{hi_d.isoformat()}&limit=5000") or []
+    # 本期以前 40 天的【更正】／【取消】：改期可能在上週就推過更正
+    pfix = supa("push_log?select=message_id,source,code,action,act_date,line,mode,push_messages(status,sent_at)"
+                f"&action=in.({quote('更正')},{quote('取消')})&push_date=gte.{(start - dt.timedelta(days=40)).isoformat()}"
+                f"&push_date=lt.{start.isoformat()}&limit=5000") or []
+    cmp_res = compare(msgs, plog, actions, expected, cal, now, parse, prior_fixes=earlier_fixes(pfix))
+except Exception as ex:  # noqa: BLE001
+    cmp_err = f"{type(ex).__name__}: {str(ex)[:200]}"
+    print(f"⚠ 程式比對失敗：{cmp_err}")
+rows, missed = ledger(msgs, expected, name, prior, compare=cmp_res)
 appendix = expected_appendix(expected, rows, check_from, lambda x: cal.shift(x, -1), (start, upper))
 report = render(msgs, start, today, now, missed=missed, push_alerts=push_alerts, appendix=appendix,
+                compare=(render_section(cmp_res) if cmp_res else
+                         f"## 程式比對結果\n\n- ⚠ 程式比對失敗，本週沒有差異清單：{cmp_err}。請 Emit 排查後重跑匯出；"
+                         "失敗不代表推播正常。\n"),
                 check_note=f"漏推對帳範圍：主推播日 {check_from:%m/%d}～{last_push_day:%m/%d}（推播入庫起日 {log_start:%Y-%m-%d}），"
                            f"策略訊號應推 {len(expected)} 項、漏推 {len(missed)} 項；IPO、舊板塊沒有應推清單，只列已推項目")
 open("report.md", "w", encoding="utf-8").write(report)
 json.dump({"name": name, "columns": LEDGER_COLS, "rows": [[r[c] for c in LEDGER_COLS] for r in rows],
-           "missed": len(missed), "expected": len(expected), "push_alerts": push_alerts, "check_from": check_from.isoformat()},
+           "missed": len(missed), "expected": len(expected), "push_alerts": push_alerts, "check_from": check_from.isoformat(),
+           "compare": ({"counts": cmp_res["counts"], "diffs": cmp_res["diffs"], "n_items": cmp_res["n_items"],
+                        "n_trade": cmp_res["n_trade"], "n_expected": cmp_res["n_expected"]} if cmp_res
+                       else {"error": cmp_err})},
           open("ledger.json", "w", encoding="utf-8"), ensure_ascii=False)
 json.dump(expected, open("expected.json", "w", encoding="utf-8"), ensure_ascii=False)
 print("===BEGIN===")
 print(report)
 print("===END===")
 print(f"總表 {len(rows)} 列；應推 {len(expected)} 項，漏推 {len(missed)} 項；主推播時間異常 {len(push_alerts)} 項")
+print("程式比對：" + (("、".join(f"{k} {v}" for k, v in cmp_res["counts"].items() if v) or "0 筆差異") if cmp_res
+                    else f"失敗 {cmp_err}"))
 if os.environ.get("RAW") == "1":
-    json.dump({"messages": msgs, "expected": expected}, open("raw.json", "w", encoding="utf-8"), ensure_ascii=False)
+    json.dump({"messages": msgs, "expected": expected, "push_log": plog, "actions": actions, "prior_fixes": pfix,
+               "holidays": sorted(d.isoformat() for d in cal.hol), "as_of": now.isoformat(), "start": start.isoformat()},
+              open("raw.json", "w", encoding="utf-8"), ensure_ascii=False)
