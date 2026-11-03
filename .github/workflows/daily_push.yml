@@ -129,6 +129,16 @@ jobs:
         continue-on-error: true
         run: python3 scripts/buyback_actions.py
 
+      # 改期常只改到出場列：推播前把進場列記的出場日同步成出場列（事故 9、17）。
+      # 進場推過、出場日在明天以後的，主推播的 changes() 會因此推【更正】；已過去的不補推。
+      - name: 成對日期同步（進場列與出場列互記的日期）
+        if: steps.gate.outputs.go == '1'
+        id: pairsync
+        continue-on-error: true
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+        run: python3 scripts/pair_sync.py
+
       - name: 推播 LINE
         if: steps.gate.outputs.go == '1'
         env:
