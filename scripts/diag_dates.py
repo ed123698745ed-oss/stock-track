@@ -5,6 +5,7 @@ FROM／TO：日期範圍（預設今天前 10 天～後 14 天）
 import datetime as dt
 import json
 import os
+import urllib.parse
 
 from calendar_signals import supa
 
@@ -57,6 +58,7 @@ if ex_from and ex_to:
 
 # 任意唯讀查詢：QUERIES 以「;;」分隔的 PostgREST GET 路徑（只允許 select，不寫入）
 for q in [x.strip() for x in (os.environ.get("QUERIES") or "").split(";;") if x.strip()]:
+    q = urllib.parse.quote(q, safe="?&=,.()*:;/-_%!")  # 中文參數要編碼，否則 ascii 錯誤
     if "select=" not in q:
         print(f"\n===== 略過（缺 select=）：{q}")
         continue
