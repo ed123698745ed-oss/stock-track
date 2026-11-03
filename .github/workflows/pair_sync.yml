@@ -1,0 +1,26 @@
+name: 成對日期同步（單獨執行）
+
+# 平常由「每日訊號推播」在推播前自動跑；這裡給手動檢查或一次性修正用。先 dry_run=1 看清單，再 dry_run=0 寫入。
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '1＝只列出要改的列，不寫入'
+        required: false
+        default: '1'
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONUNBUFFERED: '1'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      DRY_RUN: ${{ github.event.inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd scripts && python3 pair_sync.py
