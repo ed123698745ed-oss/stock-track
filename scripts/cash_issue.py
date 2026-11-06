@@ -80,12 +80,19 @@ def _get(url, data=None, hdr=None, tries=3, parse=None):
     raise last
 
 
+def _not_blocked(html):
+    """MOPS 安全性阻擋頁（FOR SECURITY REASONS）回 2xx 也要當失敗重試，不能當成「沒有公告」。"""
+    if "FOR SECURITY REASONS" in html or "因為安全性考量" in html:
+        raise ValueError("MOPS 安全性阻擋頁")
+    return html
+
+
 def mops(params):
     body = json.dumps({"apiName": "ajax_t05st01", "parameters": params}).encode()
-    r = json.loads(_get("https://mops.twse.com.tw/mops/api/redirectToOld", body,
-                        {"Content-Type": "application/json", "Origin": "https://mops.twse.com.tw",
-                         "Referer": "https://mops.twse.com.tw/mops/"}))
-    return _get(r["result"]["url"], hdr={"Referer": "https://mops.twse.com.tw/"})
+    r = _get("https://mops.twse.com.tw/mops/api/redirectToOld", body,
+             {"Content-Type": "application/json", "Origin": "https://mops.twse.com.tw",
+              "Referer": "https://mops.twse.com.tw/mops/"}, parse=json.loads)  # 非 JSON 也重試（防錯清單 B）
+    return _get(r["result"]["url"], hdr={"Referer": "https://mops.twse.com.tw/"}, parse=_not_blocked)
 
 
 def _text(h):
@@ -196,7 +203,7 @@ DATE_ANY = re.compile(r"(?:民國)?\s*(\d{2,3})\s*[/年]\s*(\d{1,2})\s*[/月]\s*
 def _post_ov(path, params):
     import urllib.parse
     return _get("https://mopsov.twse.com.tw/mops/web/" + path, urllib.parse.urlencode(params).encode(),
-                {"Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"})
+                {"Referer": "https://mopsov.twse.com.tw/mops/web/t146sb10"}, parse=_not_blocked)
 
 
 def list017(period):

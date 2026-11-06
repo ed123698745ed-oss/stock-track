@@ -233,3 +233,22 @@ def test_exright_main_logs_every_event(monkeypatch, capsys):
     assert "上櫃 4444 未公告" in out and "略過：股利尚未公告" in out
     assert "上市 5555 太早" in out and "略過：T-6>今天" in out
     assert "DRY_RUN：不寫入" in out
+
+
+# ---- MOPS 安全性阻擋頁／非 JSON（2026-11-06 21:07 004、019 抓取失敗） ----
+BLOCK = "<html><body>因為安全性考量，您所執行的頁面無法呈現。<BR>FOR SECURITY REASONS, THIS PAGE CAN NOT BE ACCESSED.</body></html>"
+
+
+def test_mops_retries_non_json_then_ok(monkeypatch, sleeps):
+    seq = [Resp(BLOCK, "text/html"), Resp(json.dumps({"result": {"url": "https://mopsov.twse.com.tw/x"}})),
+           Resp("<table>ok</table>", "text/html")]
+    monkeypatch.setattr(cash_issue._op, "open", lambda req, timeout=None: seq.pop(0))
+    assert cash_issue.mops({"step": 1}) == "<table>ok</table>"
+    assert sleeps == [5]
+
+
+def test_post_ov_block_page_is_failure_not_empty(monkeypatch, sleeps):
+    monkeypatch.setattr(cash_issue._op, "open", lambda req, timeout=None: Resp(BLOCK, "text/html"))
+    with pytest.raises(ValueError):
+        cash_issue._post_ov("ajax_t56sb12", {"step": "2"})
+    assert len(sleeps) == 2  # 3 次都失敗才放棄

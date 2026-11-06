@@ -27,6 +27,7 @@ TPE = dt.timezone(dt.timedelta(hours=8))
 STAT019 = {"name": "內部人申報轉讓", "n": 757, "win": 59.8, "p": None}
 HOLD019 = 5
 MA = 20
+FAILED = []  # 抓取失敗的申報日
 CORP = re.compile(r"公司|投資|基金|銀行|專戶|有限|株式|limited|ltd|inc|corp|llc", re.I)
 
 
@@ -66,6 +67,7 @@ def main():
 
     _get("https://mopsov.twse.com.tw/mops/web/t56sb12_q1")
     events = {}
+    failed_days = FAILED  # 有任何一天抓不到，最後以失敗結束，讓主推播帶出「019 可能漏掉訊號」警告（不靜默當成沒有申報）
     d = today - dt.timedelta(days=days)
     while d <= today:
         if d.weekday() < 5:
@@ -73,6 +75,7 @@ def main():
                 rs = fetch_day(d)
             except Exception as e:
                 print(f"  {d} 抓取失敗：{e}")
+                failed_days.append(d.isoformat())
                 rs = []
             for r in rs:
                 if qualifies(r):
@@ -162,3 +165,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    if FAILED:
+        print(f"⚠ 以下申報日抓取失敗，019 可能漏掉訊號：{', '.join(FAILED)}")
+        raise SystemExit(1)
