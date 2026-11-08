@@ -43,7 +43,7 @@ jobs:
       QUERIES: ${{ github.event.inputs.queries }}
     steps:
       - uses: actions/checkout@v4
-      - run: cd scripts && python3 diag_dates.py | tee /tmp/diag.txt
+      - run: cd scripts && python3 probe_insider.py | tee /tmp/diag.txt
       - name: 結果推到暫存分支 tmp-diag（給連不到 Actions 日誌的環境取用）
         run: |
           git config user.name github-actions; git config user.email actions@github.com
