@@ -47,7 +47,7 @@ def main():
 
     out = []
     for code, ds in by_code.items():
-        prev_exit = None
+        prev_exit, prev_legs = None, None
         for r in ds:
             start, end = dt.date.fromisoformat(r["start_date"]), dt.date.fromisoformat(r["end_date"])
             cycle = start.isoformat()  # 週期鍵沿用公告起日，順延後同一列改日期（推播會列「更正」）
@@ -73,8 +73,13 @@ def main():
                     x["ignored"] = False
                 x["strategy_name"] = "新制處置股"
                 x["detail"] = f"{note}處置 {start:%m/%d}～{end:%m/%d}（{n} 日）｜處置最後一天收盤賣"
+            # 前一筆還沒出場又被再處置：前一筆也標「後面另有再處置」，推播才分得出兩筆部位（2026-11-08 冠西電、大世科）
+            if note and prev_legs:
+                for x in prev_legs:
+                    if "後面另有再處置" not in x["detail"]:
+                        x["detail"] = f"後面另有再處置（{start:%m/%d}～{end:%m/%d}）｜" + x["detail"]
             out += legs
-            prev_exit = end
+            prev_exit, prev_legs = end, legs
             print(f"  {code} {r['company_name']} 處置 {start}～{end}（{n} 日）→ 買 {start} 收盤、賣 {end} 收盤" + ("（重疊）" if note else ""))
 
     out = [r for r in out if r["act_date"] >= (today - dt.timedelta(days=14)).isoformat()]

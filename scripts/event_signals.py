@@ -143,9 +143,11 @@ def c020(days, cal, today=None):
     lastsig = {}   # 代號 → 上次被採計訊號時的有效日序號
     prevhit = {}   # 代號 → 前一有效日是否達門檻
     cluster_idx, rows, notes = [], [], []
+    daily = {}  # 日期 → 當天判斷結果（每晚寫入 intraday_alerts，週報列出；沒訊號也要留紀錄）
     for i, r in enumerate(days):
         if not r.get("has_margin"):
             notes.append(f"{r['d']} 融資資料不完整，020 當天不判斷")
+            daily[r["d"]] = "融資資料未齊，未判斷"
             continue
         sigs, base = [], 0
         for code, s in r["stocks"].items():
@@ -182,10 +184,15 @@ def c020(days, cal, today=None):
         if base < M["min_base"]:
             if base:
                 notes.append(f"{r['d']} 020 分母 {base} 檔 < {M['min_base']}，不計算觸發比例")
+            daily[r["d"]] = f"分母 {base} 檔 < {M['min_base']}，未判斷"
             continue
+        ratio_txt = f"訊號 {len(sigs)} 檔／分母 {base} 檔 = {len(sigs) / base:.2%}"
         if len(sigs) < base * M["cluster"]:
+            daily[r["d"]] = f"{ratio_txt}，未達群聚門檻 {M['cluster']:.0%}"
             continue
         second = any(i - j <= M["window"] for j in cluster_idx)
+        daily[r["d"]] = (f"群聚日：{ratio_txt}，" + (f"二次群聚日 → {cal.shift(_d(r['d']), 1):%m/%d} 開盤進場" if second else
+                         f"第一次群聚（{M['window']} 個交易日內再出現群聚日才是二次群聚、才進場）"))
         cluster_idx.append(i)
         notes.append(f"群聚日 {r['d']}：訊號 {len(sigs)} 檔／分母 {base} 檔 = {len(sigs) / base:.2%}"
                      f"{'　← 二次群聚日' if second else ''}")
@@ -199,6 +206,7 @@ def c020(days, cal, today=None):
         for x in rs:
             x["detail"] = f"E-Test 候選｜等權買進：{names}{more}｜" + x["detail"]
         rows += rs
+    c020.daily = daily
     return rows, notes
 
 
@@ -206,6 +214,22 @@ def build(days, cal):
     days = sorted(days, key=lambda r: r["d"])
     r020, notes = c020(days, cal)
     return a08(days, cal) + c014(days, cal) + c010(days, cal) + r020, watch010(days, cal), notes
+
+
+def log020(daily, last_d, dry):
+    """020 當天判斷結果寫進 intraday_alerts（key 前綴 c020:），週報〈020 每晚判斷結果〉讀這裡。
+    同一天 19:30（融資多半未齊）、21:07、22:37 各寫一筆，內容相同不重複；週報取最後一筆有判斷的。"""
+    res = daily.get(last_d)
+    if not res:
+        return
+    print(f"020 今天（{last_d}）判斷：{res}")
+    if dry:
+        return
+    try:
+        supa("intraday_alerts?on_conflict=d,key", "POST", [{"d": last_d, "key": f"c020:{res}"}],
+             prefer="resolution=ignore-duplicates,return=minimal")
+    except Exception as e:  # 紀錄失敗不影響訊號寫入
+        print(f"⚠ 020 判斷結果寫入失敗：{e}")
 
 
 def main():
@@ -244,6 +268,7 @@ def main():
         "d": last["d"], "has_otc": last.get("has_otc"), "has_margin": last.get("has_margin"),
         "taiex_pct": last.get("taiex_pct"),
         "limit_down": (last.get("ld_twse") or 0) + (last.get("ld_tpex") or 0)}, ensure_ascii=False), "utf-8")
+    log020(getattr(c020, "daily", {}), last["d"], dry)
     if dry:
         print("DRY_RUN：不寫入")
         return

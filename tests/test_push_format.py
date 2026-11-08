@@ -206,3 +206,41 @@ def test_msci_prep_without_effective(monkeypatch):
 
 if __name__ == "__main__":
     print(compose()[0])
+
+
+# ---- 2026-11-08：A02 兩次處置重疊時標出是哪一筆；014 收盤成立通知 ----
+def test_a02_overlap_tag_and_parse():
+    from push_report import parse
+    ex = srow("A02", "新制處置股", "冠西電", "2466", "exit", "long", "close",
+              "後面另有再處置（11/04～11/10）｜處置 10/30～11/05（5 日）｜處置最後一天收盤賣", "2026-10-30")
+    en = srow("A02", "新制處置股", "冠西電", "2466", "entry", "long", "close",
+              "與前次處置重疊（前次 11/05 結束）｜處置 11/04～11/10（5 日）｜處置最後一天收盤賣", "2026-11-10")
+    plain = srow("A02", "新制處置股", "聯茂", "6213", "entry", "long", "close",
+                 "處置 11/05～11/11（5 日）｜處置最後一天收盤賣", "2026-11-11")
+    lines, _ = dp.render_items([], [ex, en, plain])
+    txt = "\n".join(lines)
+    assert "· 收盤賣出（10/30(五) 進場那筆）：冠西電 2466" in txt
+    assert "· 收盤買進（再處置，11/10(二) 賣）：冠西電 2466" in txt
+    assert "· 收盤買進：聯茂 6213" in txt  # 沒重疊維持精簡
+    items = parse(txt)[0]
+    assert [(i["code"], i["action"], i["timing"]) for i in items] == \
+        [("2466", "賣出", "收盤"), ("2466", "買進", "收盤"), ("6213", "買進", "收盤")]
+
+
+def test_close_confirm_message():
+    from push_report import parse, target_day
+    rows = []
+    for v, p in (("持有5日", "2026-11-12"), ("持有15日", "2026-11-26")):
+        r = srow("014", "崩盤跌停群聚消退反彈", "加權指數", "TAIEX", "entry", "long", "close",
+                 "跌停 115 家｜n=8 勝率100% p=0.0290", p)
+        r.update(variant=v, act_date="2026-11-05", due_label="今天", notified_at=None)
+        rows.append(r)
+    rows.append(dict(rows[0], notified_at="2026-11-05T11:40:00Z"))  # 已通知過的不再送
+    rows.append(dict(rows[0], strategy_id="010", variant="開板放空"))  # 010 有盤中提醒，不在此
+    sel = dp.close_rows(rows)
+    assert len(sel) == 2
+    text, _ = dp.compose_close(dt.date(2026, 11, 5), sel)
+    assert text.startswith("收盤成立｜11/5(四)") and "依據：014 跌停 115 家" in text
+    assert "持有5日收盤賣（11/12(四)）" in text and "持有15日收盤賣（11/26(四)）" in text
+    assert target_day(text, dt.datetime(2026, 11, 5, 19, 34)) == dt.date(2026, 11, 5)
+    assert len(parse(text)[0]) == 2

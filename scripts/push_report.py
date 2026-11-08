@@ -16,10 +16,10 @@ from push_compare import load_cfg, result_for
 
 TPE = dt.timezone(dt.timedelta(hours=8))
 WD = "一二三四五六日"
-MODE = {"main": "主推播", "late": "補推", "intraday": "盤中提醒", "closure": "臨時休市通知", "closure_check": "休市待確認"}
+MODE = {"main": "主推播", "late": "補推", "intraday": "盤中提醒", "close": "收盤成立通知", "closure": "臨時休市通知", "closure_check": "休市待確認"}
 TIMING = {"open": "開盤", "close": "收盤"}
 
-HEAD = re.compile(r"(?:交易提醒|補充提醒)｜(\d{1,2})/(\d{1,2})")
+HEAD = re.compile(r"(?:交易提醒|補充提醒|收盤成立)｜(\d{1,2})/(\d{1,2})")
 INTRA = re.compile(r"盤中提醒 (\d{1,2})/(\d{1,2})")
 ITEM = re.compile(r"^【([^】]+)】(?:(開盤|收盤)　)?(.+?) (\w+)$")
 FIX = re.compile(r"^【更正】(.+?)｜(.+?) (\w+) (\S+)$")
@@ -217,8 +217,35 @@ def fix_note(f, d):
     return note
 
 
+C020_FROM = dt.date(2026, 11, 9)  # 020 每晚判斷結果自這天起寫入 intraday_alerts（c020:）
+
+
+def render_020(recs, tdays):
+    """〈020 每晚判斷結果〉：每個交易日一列。recs：intraday_alerts 的 c020: 列（d、key、created_at）；
+    tdays：要列的交易日（判斷時段已過）。同一天多筆取最後一筆有判斷的（19:30 多半融資未齊）。"""
+    by = {}
+    for r in sorted(recs or [], key=lambda r: r.get("created_at") or ""):
+        by.setdefault(r["d"], []).append(r["key"].split(":", 1)[1])
+    out = ["## 020 每晚判斷結果\n",
+           "依據：每日訊號推播 19:30／21:07／22:37 的 event_signals 判斷（intraday_alerts c020:）；"
+           "沒有訊號不推 LINE，但每天都要有一筆紀錄。\n"]
+    for d in tdays:
+        ks = by.get(d.isoformat()) or []
+        done = [k for k in ks if not k.startswith("融資資料未齊")]
+        if done:
+            out.append(f"- {d:%m/%d}({WD[d.weekday()]})：{done[-1]}")
+        elif ks:
+            out.append(f"- {d:%m/%d}({WD[d.weekday()]})：⚠ {ks[-1]}（22:37 仍未齊，當天沒有判斷）")
+        elif d < C020_FROM:
+            out.append(f"- {d:%m/%d}({WD[d.weekday()]})：（{C020_FROM:%m/%d} 起才記錄）")
+        else:
+            out.append(f"- {d:%m/%d}({WD[d.weekday()]})：⚠ 沒有判斷紀錄，請 Emit 查 22:37 執行紀錄")
+    out.append("")
+    return "\n".join(out)
+
+
 def render(messages, start, end, generated, ledger_url=None, missed=None, check_note=None, push_alerts=None,
-           appendix=None, compare=None):
+           appendix=None, compare=None, c020=None):
     msgs = prepare(messages)
     days = build_days(msgs)
     out = []
@@ -241,6 +268,8 @@ def render(messages, start, end, generated, ledger_url=None, missed=None, check_
     w("")
     if compare:
         w(compare)
+    if c020:
+        w(c020)
     if push_alerts:
         w("## ⚠ 主推播時間異常\n")
         w("⑦ 主推播送出時間不在 19:00～23:59；⑧ 某交易日開盤前沒收到成功的主推播（依目標交易日判斷，休市日不算）。請人工確認內容與日期。\n")
@@ -362,7 +391,9 @@ def ledger(messages, expected=(), report_name="", prior=None, compare=None):
     for e in expected:
         if recon_key(e["strategy_id"], e["company_code"], e["action"], e["act_date"]) in pushed:
             continue
-        r = {"策略": e["strategy_id"], "代號": e["company_code"], "名稱": e["company_name"], "動作": e["action"],
+        var = e.get("variant") or ""
+        nm = (e.get("company_name") or "") + (f"（{var}）" if var and var != (e.get("company_name") or "") + e["company_code"] else "")
+        r = {"策略": e["strategy_id"], "代號": e["company_code"], "名稱": nm, "動作": e["action"],
              "執行日": e["act_date"], "時點": TIMING.get(e.get("act_timing"), ""), "狀態": "⚠ 漏推",
              "首次推播": "", "推播類型": "", "LINE回應": "", "更正": "", "週報": report_name,
              "核准V/R": approved(e["strategy_id"])}
@@ -425,9 +456,13 @@ def expected_appendix(expected, rows, check_from, push_day, act_range):
         keys.add(k)
         if k[0] == "010" and k[2] == "放空":  # 010 盤中通知例外：執行日盤中（約 13:05／13:15）提醒
             window = f"{ad:%m/%d} 盤中～13:30 收盤前（010 盤中通知例外）"
+        elif e["strategy_id"] in ("014", "A08") and e.get("role") == "entry":  # 收盤後才確認
+            window = f"{ad:%m/%d} 收盤後當晚（收盤成立通知）"
         else:
             window = f"{push_day(ad):%m/%d} 19:00～{ad:%m/%d} 08:30"
-        out.append(f"| {e['strategy_id']} | {e['company_code']} | {e.get('company_name') or ''} | {e['action']} "
+        var = e.get("variant") or ""
+        nm = (e.get("company_name") or "") + (f"（{var}）" if var and var != (e.get("company_name") or "") + e["company_code"] else "")
+        out.append(f"| {e['strategy_id']} | {e['company_code']} | {nm} | {e['action']} "
                    f"| {e['act_date']} | {TIMING.get(e.get('act_timing'), '')} "
                    f"| {window} | {'｜'.join(k)} "
                    f"| {pushed.get(k) or '⚠漏推'}{'（網站隱藏，非取消）' if e.get('hidden') else ''} |")

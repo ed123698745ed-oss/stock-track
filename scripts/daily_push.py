@@ -417,6 +417,23 @@ def _entry(r, kind):
             "stock": stock or (frags[0] if frags else ""), "row": r}
 
 
+def overlap_tag(r):
+    """A02 同一檔兩次處置重疊（同時有兩筆部位）時，標出這一行是哪一筆。
+    賣出：「10/30 進場那筆」；再處置的買進：「再處置，11/10 賣」；前一筆的買進：「11/05 賣」。
+    註記放在動作後面（「· 收盤賣出（10/30 進場那筆）：冠西電 2466」），行尾仍是代號，週報解析不受影響。"""
+    if not isinstance(r, dict) or r.get("strategy_id") != "A02":
+        return None
+    det = r.get("detail") or ""
+    if "重疊" not in det and "後面另有再處置" not in det:
+        return None
+    pair = r.get("pair_date")
+    if not pair:
+        return None
+    if r.get("role") == "exit":
+        return f"{md(pair)} 進場那筆"
+    return f"再處置，{md(pair)} 賣" if "與前次處置重疊" in det else f"{md(pair)} 賣"
+
+
 def render_items(tmr, stg):
     """回傳 (行列表, 實際列出的原始列)。
     【代號】策略名 → 每檔一行「· 時點動作：股名 代號」，依時點、動作排序。"""
@@ -444,6 +461,9 @@ def render_items(tmr, stg):
         for e in sorted(es, key=eorder):
             t, a = e["timing"], e["action"]
             when = f"{t}{a}" if t in TIMING_ORDER else (f"{a}（{t}）" if t else a)
+            tag = overlap_tag(e["row"])
+            if tag and t in TIMING_ORDER:
+                when += f"（{tag}）"
             out.append(f"· {when}：{e['stock']}".rstrip("："))
     return out, [e["row"] for e in ents]
 
@@ -492,6 +512,54 @@ def compose(now, tmr, stg, run, next_day, problems, watch=None, late=False, prep
     out += ["", site(next_day)]
 
     return fit("\n".join(out)), shown
+
+
+# 訊號日「當天收盤」進場、收盤後才確認的策略：晚間主推播只列明天，這類進場列（執行日＝今天）原本完全不推。
+# 2026-11-05 014 跌停 115 家成立卻沒有任何通知（盤中 13:15 只掃到 35 家）。改為收盤後另送一則「收盤成立」。
+# 010 進場已有盤中提醒（開板放空），不重複。
+SAME_DAY = ("014", "A08")
+
+
+def close_rows(stg):
+    return [r for r in (stg or []) if r.get("strategy_id") in SAME_DAY and r.get("role") == "entry"
+            and r.get("due_label") == "今天" and not r.get("notified_at")]
+
+
+def compose_close(today, rows):
+    """「收盤成立」訊息：標頭帶今天日期（週報以此為執行日），內容沿用精簡排版。"""
+    out = [f"收盤成立｜{md(today)}", "收盤後才確認的訊號；規則是今天收盤進場，出場日照規則計算。訊息送出不等於成交。"]
+    lines, shown = render_items([], rows)
+    out += lines
+    basis = {}
+    for r in rows:  # 014 的 detail 開頭是「跌停 115 家」；A08 沒有就不列
+        b = (r.get("detail") or "").split("｜")[0]
+        if b and not b.startswith("n="):
+            basis.setdefault(r["strategy_id"], b)
+    if basis:
+        out += ["", "依據：" + "；".join(f"{k} {v}" for k, v in basis.items())]
+    out += ["", site(today)]
+    return fit("\n".join(out)), shown
+
+
+def send_close(stg, today, now):
+    rows = close_rows(stg)
+    if not rows:
+        return
+    text, shown = compose_close(today, rows)
+    print(text)
+    if os.environ.get("DRY_RUN") == "1":
+        print("\nDRY_RUN：收盤成立通知不推送")
+        return
+    status = push_line(text)
+    print("\n收盤成立通知 LINE 回應", status)
+    log_push("close", text, status, today,
+             [{"source": r["strategy_id"], "code": r.get("company_code"), "name": r.get("company_name"),
+               "action": r.get("action"), "act_date": r.get("act_date"), "act_timing": r.get("act_timing"),
+               "line": strategy_line(r)} for r in shown])
+    if status == 200:
+        ids = [str(r["id"]) for r in rows if r.get("id")]
+        if ids:
+            safe(lambda: supa(f"strategy_actions?id=in.({','.join(ids)})", "PATCH", {"notified_at": now.isoformat()}))
 
 
 def site(day):
@@ -728,6 +796,12 @@ def main():
             problems.append(f"舊板塊（庫藏股等）{md(next_day)} 待辦讀取失敗，請開網站確認：{e3}")
         else:
             tmr = [r for r in tmr if r.get("due_label") != "明天" or r.get("block_code") not in OLD_NAMES] + (extra or [])
+    if hol and cal.is_trading(today):
+        try:
+            send_close(stg, today, now)  # 先送：補推若沒有新增會提早結束
+        except Exception as ex:  # 收盤成立通知失敗不能擋主推播
+            problems.append(f"014／A08 收盤成立通知送出失敗：{type(ex).__name__}")
+            print(f"⚠ 收盤成立通知失敗：{ex}")
     problems += market_problems(today, cal if hol else None)
     problems += read_out("warn017.json") or []  # cash_issue.py：017 查不到認購比例
     problems += read_out("warn_a02.json") or []  # disposal_signals.py：處置天數不符、未自動取消

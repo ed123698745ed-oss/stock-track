@@ -20,7 +20,8 @@ from urllib.parse import quote
 
 from calendar_signals import Cal, supa
 from push_compare import compare, earlier_fixes, render_section
-from push_report import LEDGER_COLS, TPE, expected_appendix, is_cancelled, ledger, load_prior, parse, render
+from push_compare import same_day_entry
+from push_report import LEDGER_COLS, TPE, expected_appendix, is_cancelled, ledger, load_prior, parse, render, render_020
 
 
 def q(ts):
@@ -52,7 +53,7 @@ first = supa("push_messages?select=sent_at&order=sent_at&limit=1") or []
 log_start = dt.datetime.fromisoformat(first[0]["sent_at"].replace("Z", "+00:00")).astimezone(TPE).date() if first else today
 check_from = max(start, log_start)
 upper = cal.shift(last_push_day, 1)
-acts = supa(f"strategy_actions?select=strategy_id,company_code,company_name,role,side,act_date,act_timing,ignored,checked"
+acts = supa(f"strategy_actions?select=strategy_id,variant,company_code,company_name,role,side,act_date,act_timing,ignored,checked"
             f"&act_date=gt.{start.isoformat()}&act_date=lte.{upper.isoformat()}") or []
 ACT = {("entry", "long"): "買進", ("exit", "long"): "賣出", ("entry", "short"): "放空", ("exit", "short"): "回補"}
 expected = []
@@ -64,6 +65,11 @@ for a in acts:
     push_day = cal.shift(d, -1)
     if a["strategy_id"] == "010" and a["role"] == "entry" and dt.datetime.combine(d, dt.time(13, 30), TPE) > now:
         continue  # 010 進場以當日盤中提醒為通知，時段還沒過（回放 AS_OF 之後才建的列）不列應推
+    if same_day_entry(a):
+        # 014／A08 進場：收盤後才確認，以執行日當晚的「收盤成立通知」為通知（2026-11-08 起）
+        push_day = d
+        if dt.datetime.combine(d, dt.time(23, 59), TPE) > now:
+            continue
     if check_from <= push_day <= last_push_day:
         hidden = bool(a.pop("ignored"))
         a.pop("checked")
@@ -117,9 +123,22 @@ try:
 except Exception as ex:  # noqa: BLE001
     cmp_err = f"{type(ex).__name__}: {str(ex)[:200]}"
     print(f"⚠ 程式比對失敗：{cmp_err}")
+# 020 每晚判斷結果：沒訊號也要看得到當天有沒有判斷（2026-11-08 Ed 指示）
+c020_txt = None
+try:
+    c020_recs = supa(f"intraday_alerts?select=d,key,created_at&key=like.c020:*&d=gte.{start.isoformat()}"
+                     f"&d=lte.{today.isoformat()}&order=created_at&limit=500") or []
+    tdays, d = [], start
+    while d <= today:
+        if cal.is_trading(d) and (d < today or now.hour >= 23):
+            tdays.append(d)
+        d += dt.timedelta(days=1)
+    c020_txt = render_020(c020_recs, tdays)
+except Exception as ex:  # noqa: BLE001
+    c020_txt = f"## 020 每晚判斷結果\n\n- ⚠ 讀取失敗：{type(ex).__name__}: {str(ex)[:120]}\n"
 rows, missed = ledger(msgs, expected, name, prior, compare=cmp_res)
 appendix = expected_appendix(expected, rows, check_from, lambda x: cal.shift(x, -1), (start, upper))
-report = render(msgs, start, today, now, missed=missed, push_alerts=push_alerts, appendix=appendix,
+report = render(msgs, start, today, now, missed=missed, push_alerts=push_alerts, appendix=appendix, c020=c020_txt,
                 compare=(render_section(cmp_res) if cmp_res else
                          f"## 程式比對結果\n\n- ⚠ 程式比對失敗，本週沒有差異清單：{cmp_err}。請 Emit 排查後重跑匯出；"
                          "失敗不代表推播正常。\n"),
