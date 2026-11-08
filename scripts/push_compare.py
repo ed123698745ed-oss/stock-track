@@ -155,7 +155,7 @@ def items_from(messages, push_log, parse):
         sent = tpe(m["sent_at"])
         base = {"msg_id": m["id"], "sent": sent, "mode": m.get("mode"), "status": m.get("status")}
         rows = by_msg.get(m["id"]) or []
-        if not rows and m.get("mode") in ("main", "late", "intraday"):
+        if not rows and m.get("mode") in ("main", "late", "intraday", "close"):
             its, fx, _ = parse(m["text"])
             if its or fx:
                 notes.append(f"訊息 {m['id']}（{sent:%m/%d %H:%M}）推播紀錄沒有逐項資料，改以原文解析")
@@ -170,7 +170,7 @@ def items_from(messages, push_log, parse):
         t_items = {(i["strategy"], i["code"]) for i in parse(m["text"])[0] if i.get("action") in ROLE}
         l_items = {(BLOCK_SID.get(r.get("source"), r.get("source")), r.get("code")) for r in rows
                    if r.get("action") in ROLE}
-        if t_items != l_items and m.get("mode") in ("main", "late"):
+        if t_items != l_items and m.get("mode") in ("main", "late", "close"):
             only_t, only_l = sorted(t_items - l_items), sorted(l_items - t_items)
             parts = ([f"原文有、紀錄沒有 {only_t}"] if only_t else []) + ([f"紀錄有、原文沒有 {only_l}"] if only_l else [])
             notes.append(f"訊息 {m['id']}（{sent:%m/%d %H:%M}）推播紀錄與原文不一致：" + "；".join(parts))
@@ -191,8 +191,14 @@ def items_from(messages, push_log, parse):
 
 
 TM_REV = {"開盤": "open", "收盤": "close"}
+# 訊號日當天收盤進場、收盤後才確認：進場以當晚「收盤成立通知」為準（daily_push.SAME_DAY）
+SAME_DAY = ("014", "A08")
+
+
+def same_day_entry(e):
+    return e.get("strategy_id") in SAME_DAY and e.get("role") == "entry"
 BLOCK_SID = {"處置股": "A02", "庫藏股": "A03", "MSCI調整": "A04", "0050調整": "A05", "分割": "A06"}
-MODE_TXT = {"main": "主推播", "late": "補推", "intraday": "盤中提醒"}
+MODE_TXT = {"main": "主推播", "late": "補推", "intraday": "盤中提醒", "close": "收盤成立通知"}
 LINE_STOCK = re.compile(r"・(.+?) (\w+)　")
 
 
@@ -320,14 +326,21 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
             if not (cal.is_trading(sd.date()) and dt.time(12, 30) <= sd.time() <= dt.time(13, 30)):
                 add("時點不符", it, "盤中提醒應在當日 12:30～13:30 送出", f"訊息 {it['msg_id']}", key)
             continue
-        if it["action"] not in ROLE:
+        if it["mode"] == "close":  # 收盤成立通知：014／A08 當天收盤進場，收盤後當晚送出
+            sd = it["sent"]
+            if sid not in SAME_DAY or not it.get("act_date") or sd.date().isoformat() != it["act_date"] \
+                    or not (dt.time(13, 30) <= sd.time() <= dt.time(23, 59, 59)):
+                add_msg("時點不符", it, "收盤成立通知只用於 014／A08 進場，應在執行日當天 13:30～23:59 送出",
+                        f"訊息 {it['msg_id']} 收盤成立通知 {sd:%m/%d %H:%M} 送出")
+                continue
+        elif it["action"] not in ROLE:
             continue
         if not it.get("act_date"):
             add("時點不符", it, "推播項目缺執行日，無法核對", f"訊息 {it['msg_id']}（{it['src']}）", key)
             continue
         ad = D(it["act_date"])
         # 推播時間：執行日前一交易日 19:00 起、當晚送出（不跨午夜）；延後到執行日 08:30 前仍算送達，但跨午夜列不符
-        if cal.known(ad):
+        if cal.known(ad) and it["mode"] != "close":
             p = cal.shift(ad, -1)
             sd = it["sent"]
             lo = dt.datetime.combine(p, dt.time(19, 0), TPE)
@@ -429,8 +442,14 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
             continue
         it = {"sid": e["strategy_id"], "code": e["company_code"], "name": e.get("company_name"), "action": e["action"],
               "act_date": e["act_date"], "timing": e.get("act_timing"), "msg_id": "-", "line": ""}
-        window = (f"{md(e['act_date'])} 盤中～13:30（010 盤中通知）" if e["strategy_id"] == "010" and e["action"] == "放空"
-                  else f"{md(e['push_day'])} 19:00～{md(e['act_date'])} 08:30 推播")
+        if e["strategy_id"] == "010" and e["action"] == "放空":
+            window = f"{md(e['act_date'])} 盤中～13:30（010 盤中通知）"
+        elif same_day_entry(e):
+            window = f"{md(e['act_date'])} 收盤後當晚（收盤成立通知；盤中提醒只是預警）"
+        else:
+            window = f"{md(e['push_day'])} 19:00～{md(e['act_date'])} 08:30 推播"
+        if e.get("variant") and e["variant"] != (e.get("company_name") or "") + e["company_code"]:
+            it["name"] = f"{it['name']}（{e['variant']}）"
         add("漏推", it, window, f"strategy_actions 應推、推播紀錄沒有{'（網站隱藏，非取消）' if e.get('hidden') else ''}", k)
 
     for (kind, mid, want, why), its in grouped.items():

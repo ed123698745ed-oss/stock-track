@@ -221,3 +221,49 @@ def test_ledger_column_and_result():
     assert r[("004", "1101")]["比對結果"] == "時點不符"
     assert r[("019", "2201")]["比對結果"] == "漏推"  # 原文沒有 019 → 總表列為漏推
     assert pc.result_for(res, "IPO", "1234", "申購", "2026-11-03") == "不適用"
+
+
+# ---- 2026-11-08：014 當天收盤進場改以「收盤成立通知」為通知 ----
+def _c014(sent="2026-11-05T19:34:00", mode="close"):
+    actions = [row(21, "014", "TAIEX", "entry", "long", "2026-11-05", "close", "2026-11-12", "close", variant="持有5日"),
+               row(22, "014", "TAIEX", "exit", "long", "2026-11-12", "close", "2026-11-05", "close", variant="持有5日"),
+               row(23, "014", "TAIEX", "entry", "long", "2026-11-05", "close", "2026-11-26", "close", variant="持有15日"),
+               row(24, "014", "TAIEX", "exit", "long", "2026-11-26", "close", "2026-11-05", "close", variant="持有15日")]
+    msgs = [{"id": 30, "sent_at": ts(sent), "mode": mode, "status": 200,
+             "text": "收盤成立｜11/5(四)\n\n【014】崩盤・持有5日｜x\n· 收盤買進：加權指數 TAIEX"}]
+    logs = [plog(30, "014", "TAIEX", "買進", "2026-11-05", "close"),
+            plog(30, "014", "TAIEX", "買進", "2026-11-05", "close")]
+    e5 = dict(exp("014", "TAIEX", "買進", "2026-11-05", "close", "entry", "long"), push_day="2026-11-05", variant="持有5日")
+    e15 = dict(e5, variant="持有15日")
+    return msgs, logs, actions, [e5, e15]
+
+
+def test_014_close_confirm_ok():
+    res = run(*_c014())
+    assert res["diffs"] == [], res["diffs"]
+
+
+def test_014_close_confirm_wrong_day_flagged():
+    res = run(*_c014(sent="2026-11-06T19:34:00"))
+    assert any(d["類型"] == "時點不符" and "收盤成立通知" in d["應為何值"] for d in res["diffs"])
+
+
+def test_014_missed_shows_variant_and_window():
+    msgs, logs, actions, expected = _c014()
+    res = run([], [], actions, expected)
+    miss = [d for d in res["diffs"] if d["類型"] == "漏推"]
+    assert len(miss) == 2
+    assert {"持有5日", "持有15日"} == {d["股票"].split("（")[1].split("）")[0] for d in miss}
+    assert all("收盤成立通知" in d["應為何值"] for d in miss)
+
+
+def test_render_020_marks_missing_days():
+    from push_report import render_020
+    recs = [{"d": "2026-11-09", "key": "c020:融資資料未齊，未判斷", "created_at": "1"},
+            {"d": "2026-11-09", "key": "c020:訊號 10 檔／分母 1700 檔 = 0.59%，未達群聚門檻 2%", "created_at": "2"},
+            {"d": "2026-11-10", "key": "c020:融資資料未齊，未判斷", "created_at": "3"}]
+    txt = render_020(recs, [dt.date(2026, 11, 6), dt.date(2026, 11, 9), dt.date(2026, 11, 10), dt.date(2026, 11, 11)])
+    assert "11/06(五)：（11/09 起才記錄）" in txt
+    assert "11/09(一)：訊號 10 檔" in txt
+    assert "11/10(二)：⚠ 融資資料未齊" in txt
+    assert "11/11(三)：⚠ 沒有判斷紀錄" in txt
