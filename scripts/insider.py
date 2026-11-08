@@ -1,6 +1,6 @@
 """019 內部人申報轉讓（E-Test C02）
 
-資料：公開資訊觀測站「內部人持股轉讓事前申報日報表」（t56sb12_q1 → ajax_t56sb12 step=2）。
+資料：公開資訊觀測站「內部人持股轉讓事前申報日報表」（t56sb12_q1 → ajax_t56sb12 step=2），上市（SY）＋上櫃（OY）。
   申報日 T（當日 17:30 前輸入，視為收盤後才看得到）：
     ・轉讓方式只有「一般交易」（排除鉅額逐筆、盤後定價、多種方式、贈與、信託、洽特定人…）
     ・「本單為變更」不算新事件
@@ -31,11 +31,24 @@ FAILED = []  # 抓取失敗的申報日
 CORP = re.compile(r"公司|投資|基金|銀行|專戶|有限|株式|limited|ltd|inc|corp|llc", re.I)
 
 
+# 日報表市場別：SY＝上市、OY＝上櫃（2026-11-08 以 MOPS 實查確認：OY 10/30 有亞電 4939、11/05 有艾華 6204）。
+# 策略包 V01/R01～R03 的事件母體是上市＋上櫃；原本只抓 SY，上櫃訊號全部漏掉（事故 25）。
+REPORTS = (("SY", "上市"), ("OY", "上櫃"))
+
+
 def fetch_day(d):
-    """某一天的申報列：[{date, code, name, who, method, change}]"""
+    """某一天的申報列（上市＋上櫃）：[{date, code, name, who, method, change, market}]
+    任一市場抓取失敗就整天視為失敗（丟出例外），不把抓不到當成沒有申報。"""
+    out = []
+    for rep, mk in REPORTS:
+        out += [dict(r, market=mk) for r in fetch_report(d, rep)]
+    return out
+
+
+def fetch_report(d, rep):
     y, m, dd = f"{d.year - 1911}", f"{d.month:02d}", f"{d.day:02d}"
     h = _post_ov("ajax_t56sb12", {"run": "", "step": "2", "year": y, "month": m, "day": dd,
-                                  "report": "SY", "firstin": "true"})
+                                  "report": rep, "firstin": "true"})
     h = h.replace("</d>", "</td>")  # 觀測站第一欄的結尾標籤打錯
     out = []
     for tr in re.findall(r"<tr\b[^>]*>(.*?)</tr>", h, re.S):
@@ -111,6 +124,10 @@ def main():
         ent = cal.shift(t, 1) if cal.known(t) else None
         if not ent or not cal.known(ent):
             print(f"  {t} {code} {r0['name']}：休市日未公布，略過")
+            continue
+        if (code, t.isoformat()) not in own and ent < today:
+            # 進場日已過才抓到的事件（漏抓後補掃）：不補寫，否則只剩出場列，會推一筆從沒通知過的「回補」
+            print(f"  ⚠ {t} {code} {r0['name']}（{r0.get('market', '')}）：進場日 {ent} 已過，不補產生（漏訊號，請人工確認）")
             continue
         if (code, t.isoformat()) not in own and code in held and ent <= held[code]:
             print(f"  {t} {code} {r0['name']}：持有中（到 {held[code]}），略過")
