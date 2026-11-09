@@ -37,6 +37,9 @@ def f(x):
     return v if v > 0 else None
 
 
+MIS_FAILED = []  # 三次都抓不到的批次（第幾批）
+
+
 def mis(chs, refetch=0, wait=3):
     """MIS 即時報價。chs 例：["tse_t00.tw", "otc_6488.tw"]。每批 50 檔。
     refetch：z、b、a 全空（或沒回傳）的檔隔 wait 秒再抓，最多 refetch 次（試撮空檔常只缺一下）。"""
@@ -46,9 +49,25 @@ def mis(chs, refetch=0, wait=3):
                + "|".join(chs[i:i + 50]))
         req = urllib.request.Request(url, headers={"User-Agent": UA,
                                                    "Referer": "https://mis.twse.com.tw/stock/fibest.jsp"})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            for x in json.loads(r.read()).get("msgArray") or []:
-                out[f"{x.get('ex')}_{x.get('c')}.tw"] = x
+        # MIS 偶爾回 2xx 但內容不是 JSON（2026-11-09 13:22 輪：空白行＋非 JSON，整支中止，010 也沒檢查到）。
+        # 解析失敗也重試；三次都失敗就略過這一批、記入 MIS_FAILED，不讓一批壞資料拖垮整輪。
+        body = None
+        for k in range(3):
+            status = ctype = raw = None
+            try:
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    status, ctype, raw = getattr(r, "status", None), r.headers.get("Content-Type"), r.read()
+                body = json.loads(raw)
+                break
+            except Exception as e:
+                print(f"  MIS 第 {i // 50 + 1} 批第 {k + 1} 次失敗：{type(e).__name__} {e}｜"
+                      f"status={status} ct={ctype} body={(raw or b'')[:200]!r}")
+                time.sleep(2 * (k + 1))
+        if body is None:
+            MIS_FAILED.append(i // 50 + 1)
+            continue
+        for x in body.get("msgArray") or []:
+            out[f"{x.get('ex')}_{x.get('c')}.tw"] = x
         time.sleep(0.4)
     for n in range(refetch):
         miss = [c for c in chs if c not in out or last_price(out[c]) is None]
@@ -186,7 +205,7 @@ def main():
         chs = [f"{'tse' if s.get('m') == 'L' else 'otc'}_{c}.tw" for c, s in last["stocks"].items()]
         quotes = mis(chs)
         n = sum(at_limit_down(x) for x in quotes)
-        print(f"跌停家數（盤中）{n}／{len(quotes)} 檔")
+        print(f"跌停家數（盤中）{n}／{len(quotes)} 檔" + (f"（⚠ MIS 有 {len(MIS_FAILED)} 批抓不到，家數可能偏低）" if MIS_FAILED else ""))
         recent = supa("strategy_actions?select=act_date&strategy_id=eq.014&role=eq.entry"
                       "&order=act_date.desc&limit=1")
         in_window = False
