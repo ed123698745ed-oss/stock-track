@@ -1,5 +1,5 @@
 import json, os, sys, urllib.request
-U, K = os.environ["SUPABASE_URL"].rstrip("/"), os.environ["SUPABASE_SERVICE_KEY"]
+U, K = os.environ["SUPABASE_URL"].strip().rstrip("/"), os.environ["SUPABASE_SERVICE_KEY"].strip()
 H = {"apikey": K, "Authorization": "Bearer " + K, "Content-Type": "application/json"}
 def req(path, body=None, method=None):
     r = urllib.request.Request(U + "/rest/v1/" + path, data=None if body is None else json.dumps(body).encode(),
