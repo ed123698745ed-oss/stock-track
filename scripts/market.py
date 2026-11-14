@@ -220,6 +220,10 @@ def fetch_day(d):
     except Exception as e:
         print(f"  {d} 上櫃抓取失敗：{e}")
     n_otc_ld = sum(1 for s in stocks.values() if s["m"] == "O" and s["ld"])
+    # 週報查核用（N01）：融資「缺」時要看得出是哪一邊、來源回了幾筆；抓取例外另有上面的失敗訊息
+    print(f"  {d} 融資來源筆數：上市 {sum(1 for s in stocks.values() if s['m'] == 'L' and 'mb' in s)}"
+          f"（{'有' if margin_ok else '無'}）、上櫃 {sum(1 for s in stocks.values() if s['m'] == 'O' and 'mb' in s)}"
+          f"（{'有' if otc_margin_ok else '無'}）")
 
     return {
         "d": d.isoformat(), "taiex": taiex, "taiex_pct": pct,
