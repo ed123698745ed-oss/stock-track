@@ -367,7 +367,9 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
             else:
                 add("誤推", it, "應推清單（strategy_actions）沒有這一筆", f"訊息 {it['msg_id']}：{it['line'][:60]}", key)
             continue
-        row = exact[0]
+        # 同一事件多組合（014 持有5日／15日）進場列同日：用推播原文裡的組合名挑同組，避免跨組比對（F01）
+        same_var = [a for a in exact if a.get("variant") and a["variant"] in (it.get("line") or "")]
+        row = (same_var or exact)[0]
         if it.get("timing") and row.get("act_timing") and it["timing"] != row["act_timing"]:
             add("時點不符", it, f"{TM[row['act_timing']]}（strategy_actions id {row['id']}）",
                 f"訊息 {it['msg_id']} 推 {TM.get(it['timing'])}", key)
@@ -376,6 +378,10 @@ def compare(messages, push_log, actions, expected, cal, now, parse, cfg=None, pe
         # 成對一致（防錯清單 A7、事故 9）：進場列記的出場日＝出場列的執行日；不一致又沒推【更正】→ 進場訊息寫的出場日是錯的
         other = "exit" if role == "entry" else "entry"
         for o in idx.get((sid, it["code"], other, side), []):
+            # 只跟同一筆交易的另一腿比：同組合（variant）、同事件（cycle）。pair_sync.plan() 同口徑（F01，2026-11-14 Eve 退回）
+            if (o.get("variant") or "") != (row.get("variant") or "") or \
+                    (o.get("cycle") and row.get("cycle") and o["cycle"] != row["cycle"]):
+                continue
             if o["act_date"] != row.get("pair_date") or o.get("pair_date") == row["act_date"]:
                 continue
             ent_r, ext_r = (row, o) if role == "entry" else (o, row)

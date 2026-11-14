@@ -267,3 +267,44 @@ def test_render_020_marks_missing_days():
     assert "11/09(一)：訊號 10 檔" in txt
     assert "11/10(二)：⚠ 融資資料未齊" in txt
     assert "11/11(三)：⚠ 沒有判斷紀錄" in txt
+
+
+# ---- F01（2026-11-14 Eve 退回）：014 同一事件兩組合，不得跨組配對 ----
+def _r014(ex5="2026-11-12", pair5="2026-11-12"):
+    """11/05 跌停群聚：持有5日、持有15日各一進一出，id 同正式資料 11287～11290。"""
+    c = "2026-11-05"
+    return [row(11287, "014", "TAIEX", "entry", "long", c, "close", pair5, "close", variant="持有5日", cycle=c),
+            row(11288, "014", "TAIEX", "exit", "long", ex5, "close", c, "close", variant="持有5日", cycle=c),
+            row(11289, "014", "TAIEX", "entry", "long", c, "close", "2026-11-26", "close", variant="持有15日", cycle=c),
+            row(11290, "014", "TAIEX", "exit", "long", "2026-11-26", "close", c, "close", variant="持有15日", cycle=c)]
+
+
+def _sell014(day, act, variant, mid=41):
+    line = f"【賣出】收盤　加權指數 TAIEX\n　014 崩盤跌停群聚消退反彈・{variant}\n　進場 11/5(四) 收盤｜若有持倉"
+    msgs = [{"id": mid, "sent_at": ts(f"{day}T19:44:00"), "mode": "main", "status": 200,
+             "text": f"交易提醒\n【014】崩盤・{variant}\n· 收盤賣出：加權指數 TAIEX"}]
+    logs = [plog(mid, "014", "TAIEX", "賣出", act, "close", line)]
+    return msgs, logs
+
+
+def test_014_two_variants_legal_dates_no_cross_pair():
+    """11/11 實際情形重放：持有5日 11/12 賣出，持有15日進場列記 11/26 是另一組的合法日期 → 0 筆差異。
+    11/05 兩組進場漏推屬前週，不在本期；跨週漏發進場後的出場提醒本身不是時點錯誤。"""
+    msgs, logs = _sell014("2026-11-11", "2026-11-12", "持有5日")
+    res = run(msgs, logs, _r014(), [])
+    assert res["diffs"] == [], res["diffs"]
+
+
+def test_014_variant15_exit_ok():
+    msgs, logs = _sell014("2026-11-25", "2026-11-26", "持有15日", mid=60)
+    assert run(msgs, logs, _r014(), [])["diffs"] == []
+
+
+def test_014_same_variant_reschedule_without_correction_flagged():
+    """同組真正改期：持有5日出場順延到 11/13，進場列仍記 11/12、沒推更正 → 要抓到，且只指向同組 11287。"""
+    msgs, logs = _sell014("2026-11-12", "2026-11-13", "持有5日")
+    res = run(msgs, logs, _r014(ex5="2026-11-13", pair5="2026-11-12"), [])
+    pair = [d for d in res["diffs"] if d["類型"] == "時點不符" and "進場列" in d["證據"]]
+    assert len(pair) == 1 and "進場列 id 11287" in pair[0]["證據"], res["diffs"]
+    # 無休市卻順延 → 規則重算也會列「持有 6 個交易日」，兩項都該報
+    assert "11289" not in str(res["diffs"])
