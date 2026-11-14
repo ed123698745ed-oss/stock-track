@@ -1,0 +1,16 @@
+name: 暫時｜A04 MSCI 2026-11 名單登錄（Ed 2026-11-14 23:54 同意）
+on:
+  push:
+    branches: [tmp-a04-register]
+permissions:
+  contents: read
+jobs:
+  reg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 reg.py "$(cat mode.txt)"
