@@ -1252,7 +1252,24 @@ function fillForm() {
     if (STG.some(s => s.code === "tw50")) sel.value = "tw50";
   }
   if (!$("fEvent").value) $("fEvent").value = TODAY;
-  syncDates();
+  loadMsciAnn().then(syncDates);
+}
+
+// A04：行事曆的 MSCI 公布日是美東日期，台灣隔天清晨才看到名單；回測的公布日（進場日）是台灣那天。
+// 事件日若填成行事曆上的美東日期，自動換成台灣次一交易日，避免早一天進場（2026-11-14 Ed 同意）。
+let MSCI_ANN = null;
+async function loadMsciAnn() {
+  if (MSCI_ANN) return;
+  const r = await sb.from("calendar").select("event_date").eq("strategy_code", "msci").eq("kind", "announce")
+    .gte("event_date", addDays(TODAY, -90));
+  if (!r.error) MSCI_ANN = new Set((r.data || []).map(x => x.event_date));
+}
+function msciToTw(ev) {
+  if (!MSCI_ANN || !MSCI_ANN.has(ev)) return { ev, note: "" };
+  const tw = nextTrading(ev);
+  if (!tw) return { ev, note: `（${fmt(ev)} 是美東公布日，台灣日期待確認）` };
+  $("fEvent").value = tw;
+  return { ev: tw, note: `（已把行事曆的美東公布日 ${fmt(ev)} 換成台灣公布日 ${fmt(tw)}）` };
 }
 
 // A04／A05 依可執行策略總表：
@@ -1269,15 +1286,18 @@ const INDEX_RULE = {
   }, label: "公布後週一收盤買" },
 };
 function syncDates() {
-  const code = $("fStrategy").value, ev = $("fEvent").value;
+  const code = $("fStrategy").value;
+  let ev = $("fEvent").value, usNote = "";
   if (!ev || !code) return;
+  if (code === "msci") ({ ev, note: usNote } = msciToTw(ev));
   const eff = CAL.find(c => c.strategy_code === code && c.kind === "effective" && c.event_date >= ev);
   const rule = INDEX_RULE[code];
   if (rule) {
     $("fEntry").value = rule.entry(ev) || "";
     $("fExit").value = eff ? eff.event_date : "";
     $("fHint").textContent = `${rule.name}（依總表）：${rule.label}${$("fEntry").value ? " " + fmt($("fEntry").value) : "（日期待確認）"}` +
-      (eff ? ` → 生效日 ${fmt(eff.event_date)} 收盤賣。` : "。行事曆查不到生效日，請手動填出場日（生效日）。");
+      (eff ? ` → 生效日 ${fmt(eff.event_date)} 收盤賣。` : "。行事曆查不到生效日，請手動填出場日（生效日）。") +
+      (code === "msci" ? (usNote || "事件日填台灣看到名單那天（美東公布日的隔天）；填行事曆上的美東日期會自動換算。") : "");
     return;
   }
   if (eff) {
@@ -1290,8 +1310,8 @@ function syncDates() {
   }
   $("fEntry").value = "";
 }
-$("fStrategy").onchange = syncDates;
-$("fEvent").onchange = syncDates;
+$("fStrategy").onchange = () => loadMsciAnn().then(syncDates);
+$("fEvent").onchange = () => loadMsciAnn().then(syncDates);
 
 $("btnAdd").onclick = async () => {
   const code = $("fCode").value.trim(), name = $("fName").value.trim(), ev = $("fEvent").value;
